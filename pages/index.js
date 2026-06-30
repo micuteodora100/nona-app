@@ -50,7 +50,8 @@ export default function Nona() {
 
   const [profile, setProfile] = useState({ name: "", child: "", briefTime: "07:00", work: "", creche: "" })
   const [tasks, setTasks] = useState([])
-  const [tab, setTab] = useState("brief")
+  const [tab, setTab] = useState("home") // home | tasks | mail | settings
+  const [weekOffset, setWeekOffset] = useState(0) // weeks from current week
 
   const [weather, setWeather] = useState(null)
   const [brief, setBrief] = useState(null)
@@ -209,6 +210,14 @@ export default function Nona() {
   }
 
   async function addEmailAsTask(email, index) {
+    // Prevent duplicates: check if a task from this exact email (same subject + sender) already exists
+    const dupeKey = `${email.from}::${email.subject}`
+    const alreadyExists = tasks.some(t => t.emailKey === dupeKey)
+    if (alreadyExists) {
+      setAddedTaskIndices(prev => [...prev, index])
+      return
+    }
+
     setAddedTaskIndices(prev => [...prev, index])
     try {
       const r = await fetch("/api/ai", {
@@ -223,16 +232,18 @@ export default function Nona() {
       const task = {
         id: String(Date.now() + Math.random()),
         text: d.text || email.subject,
+        description: d.description || email.snippet || "",
         date: d.date || null,
         done: false,
         tag: d.tag || "work",
         fromEmail: true,
+        emailKey: dupeKey,
       }
       setTasks(prev => [task, ...prev])
     } catch (e) {
       // fallback: still add something rather than fail silently
       setTasks(prev => [{
-        id: String(Date.now() + Math.random()), text: email.subject, date: null, done: false, tag: "work", fromEmail: true,
+        id: String(Date.now() + Math.random()), text: email.subject, description: email.snippet || "", date: null, done: false, tag: "work", fromEmail: true, emailKey: dupeKey,
       }, ...prev])
     }
   }
@@ -296,6 +307,35 @@ export default function Nona() {
       const d = new Date(isoDate)
       return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })
     } catch { return isoDate }
+  }
+
+  function getWeekDays(offset) {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const day = today.getDay() // 0=Sun
+    const mondayOffset = day === 0 ? -6 : 1 - day
+    const monday = new Date(today)
+    monday.setDate(today.getDate() + mondayOffset + offset * 7)
+
+    const days = []
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday)
+      d.setDate(monday.getDate() + i)
+      const iso = d.toISOString().slice(0, 10)
+      const isToday = iso === today.toISOString().slice(0, 10)
+      const dayTasks = tasks.filter(t => t.date === iso && !t.done)
+      days.push({ date: d, iso, isToday, label: d.toLocaleDateString("en-GB", { weekday: "short" })[0], num: d.getDate(), tasks: dayTasks })
+    }
+    return days
+  }
+
+  function getWeekLabel(offset) {
+    const days = getWeekDays(offset)
+    const first = days[0].date, last = days[6].date
+    if (first.getMonth() === last.getMonth()) {
+      return first.toLocaleDateString("en-GB", { month: "long" })
+    }
+    return `${first.toLocaleDateString("en-GB", { month: "short" })} – ${last.toLocaleDateString("en-GB", { month: "short" })}`
   }
 
   async function addTask() {
@@ -572,77 +612,136 @@ export default function Nona() {
         // ═══════════════ MAIN APP ═══════════════
         <>
           <div className="header">
-            <span className="serif" style={{ fontSize: 24, color: "var(--gold)" }}>nona</span>
-            <span style={{ fontSize: 12, color: "var(--muted)" }}>{dateStr}</span>
-          </div>
-
-          <div className="tabs">
-            {["brief", "email", "tasks", "me"].map(t => (
-              <button key={t} className={`tab-btn ${tab === t ? "on" : ""}`} onClick={() => { setTab(t); if (t === "email" && !triage) fetchEmails() }}>
-                {t === "brief" ? "Brief" : t === "email" ? "Mail" : t === "tasks" ? "Tasks" : "Me"}
-              </button>
-            ))}
+            {tab === "home" ? (
+              <>
+                <span className="serif" style={{ fontSize: 24, color: "var(--gold)" }}>nona</span>
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>{dateStr}</span>
+              </>
+            ) : (
+              <>
+                <button onClick={() => setTab("home")} style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--gold)", fontSize: 14 }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18"><polyline points="15 18 9 12 15 6" /></svg>
+                  Back
+                </button>
+                <span style={{ fontSize: 14, color: "var(--white)", fontWeight: 600 }}>
+                  {tab === "tasks" ? "Tasks" : tab === "mail" ? "Mail" : "Settings"}
+                </span>
+              </>
+            )}
           </div>
 
           <div className="scroll">
 
-            {/* ── BRIEF ── */}
-            {tab === "brief" && <>
-              <div style={{ marginBottom: 16 }}>
-                <div className="serif" style={{ fontSize: 22 }}>{greeting}, {firstName}</div>
+            {/* ── HOME ── */}
+            {tab === "home" && <>
+              <div style={{ marginBottom: 18, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div className="serif" style={{ fontSize: 20 }}>{greeting}, {firstName}</div>
+                {weather && (
+                  <div style={{ background: "var(--gold-dim)", border: "1px solid var(--border)", borderRadius: 8, padding: "5px 10px", fontSize: 12, color: "var(--gold)", whiteSpace: "nowrap" }}>
+                    {weatherIcon(weather.code)} {weather.temp !== null ? `${weather.temp}°` : "–"}
+                  </div>
+                )}
               </div>
 
-              {weather && (
-                <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
-                  <div style={{ background: "var(--gold-dim)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 14px", fontSize: 13, color: "var(--gold)", display: "flex", alignItems: "center", gap: 6 }}>
-                    {weatherIcon(weather.code)} {weather.temp !== null ? `${weather.temp}°C` : "–"} · Luxembourg
+              {/* Tasks preview */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <span className="label" style={{ marginBottom: 0 }}>🧠 Tasks</span>
+                <button onClick={() => setTab("tasks")} style={{ fontSize: 11, color: "var(--muted)" }}>View all ›</button>
+              </div>
+              <div className="card" style={{ padding: "4px 18px", marginBottom: 20 }}>
+                {tasks.filter(t => !t.done).length === 0 ? (
+                  <div style={{ padding: "14px 0", fontSize: 13, color: "var(--muted)" }}>Nothing pending — add something on the Tasks page.</div>
+                ) : tasks.filter(t => !t.done).slice(0, 4).map((t, i, arr) => (
+                  <div key={t.id} className="task" style={{ margin: 0, background: "transparent", border: "none", borderRadius: 0, padding: "11px 0", borderBottom: i < arr.length - 1 ? "1px solid var(--border)" : "none" }}>
+                    <div className="task-check" onClick={() => toggleTask(t.id)}>
+                      {t.done && <svg viewBox="0 0 24 24" fill="none" stroke="#0D0C0A" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" width="12" height="12"><polyline points="20 6 9 17 4 12" /></svg>}
+                    </div>
+                    <div className="task-text">{t.text}</div>
+                    {t.date && <span className="task-tag" style={{ color: "var(--white)", background: "transparent", border: "1px solid var(--border)" }}>{formatDateShort(t.date)}</span>}
                   </div>
-                </div>
-              )}
-
-              <div className="card card-accent">
-                <span className="label">✦ Needs your attention</span>
-                {briefLoading ? (
-                  <span className="typing"><span /><span /><span /></span>
-                ) : brief ? (
-                  <div style={{ fontSize: 14, lineHeight: 1.9 }}>
-                    {brief.split("\n").filter(l => l.trim()).map((line, i) => (
-                      <div key={i} style={{ display: "flex", gap: 8, marginBottom: 6 }}>
-                        <span style={{ color: "var(--gold)", flexShrink: 0 }}>•</span>
-                        <span>{line.replace(/^[•\-\*]\s*/, "")}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-                <button className="btn-sm" style={{ marginTop: 14 }} onClick={generateBrief}>↺ Refresh</button>
+                ))}
               </div>
 
-              {triage?.summary && (
-                <div className="card" style={{ borderColor: "rgba(100,180,255,0.15)" }}>
-                  <span className="label">📬 Email snapshot</span>
-                  <div style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.6 }}>{triage.summary}</div>
+              {/* Week calendar */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <span className="label" style={{ marginBottom: 0 }}>📅 {getWeekLabel(weekOffset)}</span>
+                <div style={{ display: "flex", gap: 14 }}>
+                  <button onClick={() => setWeekOffset(weekOffset - 1)} style={{ color: "var(--muted)", fontSize: 14 }}>‹</button>
+                  <button onClick={() => setWeekOffset(weekOffset + 1)} style={{ color: "var(--muted)", fontSize: 14 }}>›</button>
                 </div>
-              )}
-
-              {tasks.filter(t => !t.done).length > 0 && (
-                <div className="card">
-                  <span className="label">🎯 Top tasks</span>
-                  {tasks.filter(t => !t.done).slice(0, 3).map(t => (
-                    <div key={t.id} className={`task ${t.done ? "done" : ""}`} style={{ margin: "0 0 8px" }}>
-                      <div className="task-check" onClick={() => toggleTask(t.id)}>
-                        {t.done && <svg viewBox="0 0 24 24" fill="none" stroke="#0D0C0A" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" width="12" height="12"><polyline points="20 6 9 17 4 12" /></svg>}
-                      </div>
-                      <div className="task-text">{t.text}</div>
-                      {t.date && <span className="task-tag" style={{ color: "var(--white)", background: "transparent", border: "1px solid var(--border)" }}>{formatDateShort(t.date)}</span>}
-                      {t.tag && <span className="task-tag">{t.tag}</span>}
+              </div>
+              <div className="card" style={{ marginBottom: 20 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+                  {getWeekDays(weekOffset).map(d => (
+                    <div key={d.iso} style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 9, color: "var(--muted)", marginBottom: 6 }}>{d.label}</div>
+                      <div style={{
+                        width: 26, height: 26, margin: "0 auto", borderRadius: "50%",
+                        display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11,
+                        background: d.isToday ? "var(--gold-dim)" : "transparent",
+                        border: d.isToday ? "1px solid var(--gold)" : "none",
+                        color: d.isToday ? "var(--gold)" : "var(--white)",
+                        fontWeight: d.isToday ? 600 : 400,
+                      }}>{d.num}</div>
+                      {d.tasks.length > 0 && (
+                        <div style={{ width: 4, height: 4, borderRadius: "50%", background: d.isToday ? "var(--gold)" : "rgba(232,200,122,0.6)", margin: "5px auto 0" }} />
+                      )}
                     </div>
                   ))}
                 </div>
-              )}
+                {getWeekDays(weekOffset).some(d => d.tasks.length > 0) && (
+                  <div style={{ marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+                    {getWeekDays(weekOffset).filter(d => d.tasks.length > 0).map(d => (
+                      d.tasks.map(t => (
+                        <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", fontSize: 13 }}>
+                          <div style={{ width: 6, height: 6, borderRadius: "50%", background: d.isToday ? "var(--gold)" : "rgba(232,200,122,0.6)", flexShrink: 0 }} />
+                          <div style={{ width: 44, flexShrink: 0, color: "var(--muted)", fontSize: 12 }}>{d.isToday ? "Today" : d.date.toLocaleDateString("en-GB", { weekday: "short" })}</div>
+                          <div style={{ color: "var(--white)" }}>{t.text}</div>
+                        </div>
+                      ))
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Mail preview */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <span className="label" style={{ marginBottom: 0 }}>📬 Mail</span>
+                <button onClick={() => { setTab("mail"); if (!triage) fetchEmails() }} style={{ fontSize: 11, color: "var(--muted)" }}>View all ›</button>
+              </div>
+              <div className="card" style={{ marginBottom: 20, cursor: "pointer" }} onClick={() => { setTab("mail"); if (!triage) fetchEmails() }}>
+                <div style={{ fontSize: 13, color: "var(--white)" }}>
+                  {triage?.summary || "Tap to check your inbox"}
+                </div>
+              </div>
+
+              {/* Budget placeholder */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <span style={{ fontSize: 10, color: "rgba(245,240,232,0.35)", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" }}>💳 Budget</span>
+                <span style={{ fontSize: 11, color: "rgba(245,240,232,0.25)" }}>Coming soon</span>
+              </div>
+              <div style={{ background: "rgba(255,255,255,0.02)", border: "1px dashed rgba(232,200,122,0.1)", borderRadius: 12, padding: 18, marginBottom: 20, textAlign: "center", fontSize: 12, color: "rgba(245,240,232,0.3)" }}>
+                Connect a bank account to see spending here
+              </div>
+
+              {/* Groceries placeholder */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <span style={{ fontSize: 10, color: "rgba(245,240,232,0.35)", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" }}>🛒 Groceries</span>
+                <span style={{ fontSize: 11, color: "rgba(245,240,232,0.25)" }}>Coming soon</span>
+              </div>
+              <div style={{ background: "rgba(255,255,255,0.02)", border: "1px dashed rgba(232,200,122,0.1)", borderRadius: 12, padding: 18, marginBottom: 20, textAlign: "center", fontSize: 12, color: "rgba(245,240,232,0.3)" }}>
+                Connect Lidl or Aldi to track grocery spend
+              </div>
+
+              <div style={{ textAlign: "center", paddingTop: 6, paddingBottom: 10 }}>
+                <button onClick={() => setTab("settings")} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted)" }}>
+                  ⚙ Settings
+                </button>
+              </div>
             </>}
 
             {/* ── EMAIL ── */}
-            {tab === "email" && <>
+            {tab === "mail" && <>
               <div style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 2 }}>Inbox triage</div>
                 <div style={{ fontSize: 12, color: "var(--muted)" }}>Nona reads and prioritises your emails</div>
@@ -856,7 +955,10 @@ export default function Nona() {
                           </div>
                         ) : (
                           <>
-                            <div className="task-text" onClick={() => setEditingTaskId(t.id)} style={{ cursor: "pointer" }}>{t.text}</div>
+                            <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => setEditingTaskId(t.id)}>
+                              <div className="task-text">{t.text}</div>
+                              {t.description && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{t.description}</div>}
+                            </div>
                             {t.fromEmail && <span className="task-email-badge">📧</span>}
                             {t.date && taskGroupBy !== "date" && <span className="task-tag" style={{ color: "var(--white)", background: "transparent", border: "1px solid var(--border)" }}>{formatDateShort(t.date)}</span>}
                             {t.tag && <span className="task-tag">{t.tag}</span>}
@@ -871,7 +973,7 @@ export default function Nona() {
             </>}
 
             {/* ── ME ── */}
-            {tab === "me" && <>
+            {tab === "settings" && <>
               <div style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 2 }}>{profile.name || "Your profile"}</div>
                 <div style={{ fontSize: 12, color: "var(--muted)" }}>What Nona knows about your life</div>
@@ -910,7 +1012,7 @@ export default function Nona() {
               ) : (
                 <div className="settings-row">
                   <div style={{ fontSize: 14 }}>Gmail not connected</div>
-                  <button className="btn-sm" onClick={() => setTab("email")}>Connect →</button>
+                  <button className="btn-sm" onClick={() => setTab("mail")}>Connect →</button>
                 </div>
               )}
 

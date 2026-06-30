@@ -69,12 +69,13 @@ Subject: ${email.subject}
 Content: ${email.snippet}
 
 Rules:
-- Write a short, specific task description (under 10 words if possible) describing what the recipient needs to DO — not a summary of the email. E.g. "Reply to Maria about contract" not "Email from Maria about contract."
-- If the email mentions any date, deadline, or appointment (even relative like "by Friday" or "next week"), resolve it to an actual date using today as reference and include it. If genuinely no date is mentioned, use null.
-- Guess a tag: "family", "work", "health", "errands", or null if unclear.
+- "text": a short, specific task title (under 10 words if possible) describing what the recipient needs to DO — not a summary. E.g. "Reply to Maria about contract" not "Email from Maria about contract."
+- "description": one short sentence (under 20 words) giving context — what the email is actually about, so the task makes sense without reopening the email.
+- "date": if the email mentions any date, deadline, or appointment (even relative like "by Friday" or "next week"), resolve it to an actual date using today as reference. If genuinely no date is mentioned, use null.
+- "tag": guess "family", "work", "health", "errands", or null if unclear.
 
 Return ONLY valid JSON, no markdown:
-{"text": "short task description", "date": "2026-07-12" or null, "tag": "work"}`
+{"text": "short task title", "description": "one short sentence of context", "date": "2026-07-12" or null, "tag": "work"}`
     }
 
     if (type === "parse_tasks") {
@@ -104,10 +105,19 @@ If the text describes only one task, return an array with one item. If it's uncl
     }
 
     if (type === "brief") {
+      const todayISO = new Date().toISOString().slice(0, 10)
       const pendingTasks = (tasks || [])
         .filter((t) => !t.done)
-        .slice(0, 8)
-        .map((t) => `- ${t.text}`)
+        .slice(0, 12)
+        .map((t) => {
+          if (t.date) {
+            const isFuture = t.date > todayISO
+            const isToday = t.date === todayISO
+            const dateLabel = isToday ? "TODAY" : isFuture ? `scheduled ${t.date}` : `was due ${t.date}`
+            return `- ${t.text} [${dateLabel}]`
+          }
+          return `- ${t.text} [no date]`
+        })
         .join("\n")
 
       const emailSummary = context.emailSummary || ""
@@ -121,13 +131,19 @@ About ${context.name}:
 - Child: ${context.child}${context.creche ? ` — today: ${context.creche}` : ""}
 - Work: ${context.work || "Job search + building Nona startup"}
 
-Pending tasks:
+Pending tasks (each tagged with its date status):
 ${pendingTasks || "(none)"}
 
 Email situation:
 ${emailSummary || "(no email data)"}
 
-Write ONLY a short bullet list of what needs ${context.name}'s attention today. No greeting, no narrative, no encouragement, no filler. Each line should be one concrete, specific action — pulled from her tasks and emails, in priority order. Maximum 5 bullets. If there's truly nothing pressing, say so in one line. Do not invent things to fill space. Format as a plain list, one item per line, starting each with "•".`
+Write ONLY a short bullet list of what needs ${context.name}'s attention TODAY. No greeting, no narrative, no encouragement, no filler.
+
+Critical distinction: a task tagged "scheduled [future date]" is something ALREADY ARRANGED that just hasn't happened yet — like a delivery, appointment, or installation that's booked. These do NOT need action today and should NOT appear in the brief unless today IS that date, or unless there's a genuine reason to double-check it (e.g. it's within 2 days and hasn't been confirmed). Do not tell her to "check status" or "confirm" something that's simply scheduled for later — that's manufacturing work that doesn't exist.
+
+Only include: tasks tagged "TODAY", tasks tagged "was due" (overdue, needs attention), tasks with "[no date]" that are clearly things to actively do, and anything genuinely urgent from email. If a future-scheduled item is happening within the next 2 days, you may mention it as a heads-up (not an action item) — e.g. "Door installer comes Saturday" not "Confirm door installation."
+
+Maximum 5 bullets. If there's truly nothing pressing, say so in one line. Do not invent things to fill space. Format as a plain list, one item per line, starting each with "•".`
     }
 
     const message = await client.messages.create({
