@@ -30,21 +30,51 @@ Here are her recent emails from the last 90 days (most recent first):
 
 ${emailList}
 
-Your job is to cut obvious noise, not summarize everything. Ignore clear noise: newsletters, marketing blasts, automated receipts with no action, generic "no-reply" promotional senders. Do not put these in any bucket.
+Your job is to find emails that genuinely need ${context.name}'s attention — not to summarize the whole inbox, and not to hide things out of excessive caution.
 
-For everything else — if there's any reasonable chance a human would want to see it (a reply from a real person, anything with a deadline, money, a decision, a job application, a personal or business matter, anything from someone she knows or is working with) — include it. When unsure, include it rather than hide it. Being too aggressive about hiding things is worse than showing one extra email.
+ALWAYS flag these types, with very few exceptions:
+- Security alerts: password changes, security codes, login verifications, account access notices — these matter even if automated, because they could indicate her account was accessed
+- Anything from a real named person (not a company/team name) — replies, questions, requests
+- Anything mentioning money: invoices, payments, bills, refunds, subscriptions changing price
+- Anything with a deadline, date, or appointment
+- Job-search related: recruiter messages, application updates, interview requests
+- Anything requiring a decision, reply, signature, or confirmation
+- Account/service notices that imply something changed or needs verification (password reset, suspicious activity, 2FA codes)
 
-Only surface emails that genuinely need ${context.name}'s attention: something to decide, reply to, pay, schedule, or act on. If an email requires no action and isn't time-sensitive personal/important information, leave it out entirely.
+ONLY ignore: pure marketing/promotional content, newsletters with no personal relevance, "you might like" recommendation emails, and automated receipts that need zero action (e.g. "your order shipped" with no problem).
+
+When genuinely unsure, include it as "action" rather than omit it. Do not under-flag. With a typical 90-day inbox of 50-100 emails, it would be unusual for ZERO to need attention — if your urgent+action lists are empty, double-check you haven't been too conservative.
 
 Return ONLY valid JSON, no markdown, no explanation:
 {
   "urgent": [{"index": 1, "reason": "one short line — what and why"}],
   "action": [{"index": 2, "reason": "one short line — what action, by when if known"}],
   "tasks": ["concrete task extracted from an email, phrased as something to do"],
-  "summary": "One line: how many emails actually need attention, or 'Nothing urgent' if true."
+  "summary": "One line: how many emails actually need attention, or 'Nothing urgent' if genuinely true."
 }
 
 Do not include an "fyi" bucket — if it's not worth action, don't surface it at all. Keep urgent and action arrays short — only real items, never pad them.`
+    }
+
+    if (type === "email_to_task") {
+      const email = req.body.email || {}
+      const todayStr = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })
+
+      prompt = `Today's actual date is ${todayStr}.
+
+Turn this email into ONE clear, actionable task for the recipient.
+
+From: ${email.from}
+Subject: ${email.subject}
+Content: ${email.snippet}
+
+Rules:
+- Write a short, specific task description (under 10 words if possible) describing what the recipient needs to DO — not a summary of the email. E.g. "Reply to Maria about contract" not "Email from Maria about contract."
+- If the email mentions any date, deadline, or appointment (even relative like "by Friday" or "next week"), resolve it to an actual date using today as reference and include it. If genuinely no date is mentioned, use null.
+- Guess a tag: "family", "work", "health", "errands", or null if unclear.
+
+Return ONLY valid JSON, no markdown:
+{"text": "short task description", "date": "2026-07-12" or null, "tag": "work"}`
     }
 
     if (type === "parse_tasks") {
@@ -108,7 +138,7 @@ Write ONLY a short bullet list of what needs ${context.name}'s attention today. 
 
     const text = message.content[0].text
 
-    if (type === "triage" || type === "parse_tasks") {
+    if (type === "triage" || type === "parse_tasks" || type === "email_to_task") {
       try {
         const parsed = JSON.parse(text)
         return res.json(parsed)

@@ -61,6 +61,7 @@ export default function Nona() {
   const [emailLoading, setEmailLoading] = useState(false)
   const [emailError, setEmailError] = useState(null)
   const [showAllEmails, setShowAllEmails] = useState(false)
+  const [addedTaskIndices, setAddedTaskIndices] = useState([])
   const [outlookStatus, setOutlookStatus] = useState(null) // null=unchecked, {ok, error/email}
 
   const [taskInput, setTaskInput] = useState("")
@@ -204,6 +205,35 @@ export default function Nona() {
       }
     } catch(e) {
       setTriage({ urgent: [], action: [], tasks: [], summary: "Could not triage emails: " + e.message })
+    }
+  }
+
+  async function addEmailAsTask(email, index) {
+    setAddedTaskIndices(prev => [...prev, index])
+    try {
+      const r = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "email_to_task",
+          email: { from: email.from, subject: email.subject, snippet: email.snippet || "" },
+        }),
+      })
+      const d = await r.json()
+      const task = {
+        id: String(Date.now() + Math.random()),
+        text: d.text || email.subject,
+        date: d.date || null,
+        done: false,
+        tag: d.tag || "work",
+        fromEmail: true,
+      }
+      setTasks(prev => [task, ...prev])
+    } catch (e) {
+      // fallback: still add something rather than fail silently
+      setTasks(prev => [{
+        id: String(Date.now() + Math.random()), text: email.subject, date: null, done: false, tag: "work", fromEmail: true,
+      }, ...prev])
     }
   }
 
@@ -721,6 +751,7 @@ export default function Nona() {
                       const isUrgent = triage.urgent?.some(u => u.index === i + 1)
                       const isAction = triage.action?.some(a => a.index === i + 1)
                       const flagged = isUrgent || isAction
+                      const added = addedTaskIndices.includes(i)
                       return (
                         <div key={i} className="triage-item" style={{ opacity: flagged ? 1 : 0.55, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
                           <div style={{ flex: 1, minWidth: 0 }}>
@@ -728,12 +759,10 @@ export default function Nona() {
                             <div className="triage-subject">{e.subject}</div>
                           </div>
                           {!flagged && (
-                            <button className="btn-sm" style={{ flexShrink: 0, fontSize: 11, padding: "5px 9px" }}
-                              onClick={() => {
-                                const task = { id: String(Date.now() + Math.random()), text: e.subject, done: false, tag: "work", fromEmail: true }
-                                setTasks(prev => [task, ...prev])
-                              }}>
-                              + Add as task
+                            <button className="btn-sm" style={{ flexShrink: 0, fontSize: 11, padding: "5px 9px", opacity: added ? 0.5 : 1 }}
+                              disabled={added}
+                              onClick={() => addEmailAsTask(e, i)}>
+                              {added ? "✓ Added" : "+ Add as task"}
                             </button>
                           )}
                         </div>
