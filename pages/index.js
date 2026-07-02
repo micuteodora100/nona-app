@@ -32,6 +32,30 @@ function loadCache(key, maxHours) {
   } catch { return null }
 }
 
+// Supabase sync — save to server (cross-device persistence)
+async function syncToSupabase(tasks, profile, handledEmails) {
+  try {
+    await fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tasks, profile, handledEmails: [...handledEmails] }),
+    })
+  } catch (e) {
+    // Sync failure is non-fatal — localStorage is the fallback
+    console.warn('Supabase sync failed:', e.message)
+  }
+}
+
+// Load from Supabase — returns null if unavailable
+async function loadFromSupabase() {
+  try {
+    const r = await fetch('/api/sync')
+    if (!r.ok) return null
+    const { data } = await r.json()
+    return data
+  } catch { return null }
+}
+
 function guessTag(text) {
   const t = text.toLowerCase()
   if (/crèche|creche|timothée|timothee|school|swim|gym|pick.up|drop.off/.test(t)) return "family"
@@ -99,11 +123,39 @@ export default function Nona() {
     }
   }, [])
 
+  // Save to localStorage on every change
   useEffect(() => {
     if (onboarded) {
       saveState({ onboarded: true, profile, tasks })
     }
   }, [onboarded, profile, tasks])
+
+  // Sync to Supabase when session is available and data changes
+  useEffect(() => {
+    if (onboarded && session) {
+      const timer = setTimeout(() => {
+        syncToSupabase(tasks, profile, handledEmails)
+      }, 2000) // debounce 2s to avoid hammering on rapid changes
+      return () => clearTimeout(timer)
+    }
+  }, [tasks, profile, onboarded, session])
+
+  // Load from Supabase when session first becomes available (cross-device sync)
+  useEffect(() => {
+    if (session && onboarded) {
+      loadFromSupabase().then(data => {
+        if (data) {
+          // Supabase data takes precedence over localStorage for cross-device sync
+          if (data.tasks?.length > 0) setTasks(data.tasks)
+          if (data.profile?.name) setProfile(data.profile)
+          if (data.handled_emails?.length > 0) {
+            setHandledEmails(new Set(data.handled_emails))
+            try { localStorage.setItem("nona_handled_emails", JSON.stringify(data.handled_emails)) } catch {}
+          }
+        }
+      })
+    }
+  }, [session])
 
   useEffect(() => {
     if (onboarded) {
@@ -1235,7 +1287,7 @@ export default function Nona() {
               </div>
 
               <div style={{ textAlign: "center", marginTop: 20, fontSize: 11, color: "var(--muted)" }}>
-                Nona v0.2 · built for {profile.name || "you"}
+                Nona v0.3 · built for {profile.name || "you"} · {session ? "☁️ syncing to cloud" : "💾 local only"}
               </div>
             </>}
 

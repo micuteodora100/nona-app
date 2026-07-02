@@ -103,3 +103,20 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 - Tasks = separate date field, AI-parsed on entry, grouped by date by default
 - Outlook = parked until Azure OAuth properly solved
 - Email dismiss = permanent, stored in localStorage (Supabase when available)
+
+---
+
+## 🆕 New items added July 2026
+
+### Added to P1 — Next sprint
+
+| Size | Feature | Notes |
+|------|---------|-------|
+| XL | **Supabase Auth integration** | Supabase project created. NEXT_PUBLIC_SUPABASE_URL + NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY in Vercel. Use for: (1) proper per-user login replacing APP_PASSWORD, (2) Outlook OAuth via Supabase provider, (3) cross-device sync of tasks/profile/handled emails. Microsoft Outlook OAuth configured via Supabase Auth providers — bypasses Azure Portal issue. |
+| M | **Email → Calendar auto-detection** | When triage finds a date/meeting/booking in an email (e.g. "lunch tomorrow", "booking for 8 Jul"), automatically create a calendar event and show it in the week view with a link back to the original email. No manual action needed. |
+| S | **Global email filter rules** | Let user define permanent filter rules once: "never show password change emails", "never show promotional emails from X". Applied before triage — these senders/subjects never surface again. Different from per-email dismiss (which is one-off). |
+| S | **Voice: stop recording button** | Currently voice stops when you stop speaking. Add an explicit red stop button while recording so user has control. |
+| S | **Voice: live transcript editing** | Show transcript in real-time as you speak. Allow tapping to correct words before AI parses into tasks. |
+| S | **Tasks: date badge in front** | Move date display to front of task (not a tag at the end). Clearer visual hierarchy — date first, then task text. |
+| S | **Tasks: add to calendar button** | On any task with a date, show a small calendar icon. Tap → task appears in the week calendar view automatically. |
+
