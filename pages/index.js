@@ -89,7 +89,7 @@ export default function Nona() {
   const [obCreche, setObCreche] = useState("")
   const [obWork, setObWork] = useState("")
 
-  const [profile, setProfile] = useState({ name: "", child: "", briefTime: "07:00", work: "", creche: "", language: "en-GB" })
+  const [profile, setProfile] = useState({ name: "", child: "", briefTime: "07:00", work: "", creche: "", language: "en-GB", emailFilters: [] })
   const [tasks, setTasks] = useState([])
   const [tab, setTab] = useState("home") // home | tasks | mail | settings
   const [weekOffset, setWeekOffset] = useState(0) // weeks from current week
@@ -265,7 +265,18 @@ export default function Nona() {
 
   async function triageEmails(emailList) {
     // Filter out emails already handled (task was completed) before sending to AI
-    const filteredList = emailList.filter(e => !handledEmails.has(`${e.from}::${e.subject}`))
+    // Also apply global filter rules defined by user in Settings
+    const globalFilters = profile.emailFilters || []
+    const filteredList = emailList.filter(e => {
+      const key = `${e.from}::${e.subject}`
+      if (handledEmails.has(key)) return false
+      // Check global filter rules (pattern matching on sender or subject)
+      for (const rule of globalFilters) {
+        const r = rule.toLowerCase()
+        if (e.from?.toLowerCase().includes(r) || e.subject?.toLowerCase().includes(r)) return false
+      }
+      return true
+    })
     const listToTriage = filteredList.length > 0 ? filteredList : emailList
     try {
       const r = await fetch("/api/ai", {
@@ -298,6 +309,25 @@ export default function Nona() {
           id: String(Date.now() + Math.random()), text, done: false, tag: "work", fromEmail: true,
         }))
         setTasks(prev => [...newTasks, ...prev])
+      }
+      // Auto-add calendar events extracted from emails
+      if (d.calendar_events?.length) {
+        const newEvents = d.calendar_events
+          .filter(e => e.date && e.text)
+          .map(e => ({
+            id: String(Date.now() + Math.random()),
+            text: e.text,
+            date: e.date,
+            done: false,
+            tag: "family",
+            fromEmail: true,
+          }))
+        setTasks(prev => {
+          // Only add if not already in tasks (dedup by text+date)
+          const existing = new Set(prev.map(t => `${t.text}::${t.date}`))
+          const fresh = newEvents.filter(e => !existing.has(`${e.text}::${e.date}`))
+          return [...fresh, ...prev]
+        })
       }
     } catch(e) {
       setTriage({ urgent: [], action: [], tasks: [], summary: "Could not triage emails: " + e.message })
@@ -395,7 +425,9 @@ export default function Nona() {
   const [taskAdding, setTaskAdding] = useState(false)
   const [voiceRecording, setVoiceRecording] = useState(false)
   const [voiceTranscript, setVoiceTranscript] = useState("")
+  const [voiceEditing, setVoiceEditing] = useState(false) // allow editing transcript before parse
   const [voiceStatus, setVoiceStatus] = useState("") // "listening" | "thinking" | ""
+  const recognitionRef = { current: null }
   const [taskGroupBy, setTaskGroupBy] = useState("date") // date | tag | none
   const [editingTaskId, setEditingTaskId] = useState(null)
 
@@ -468,10 +500,12 @@ export default function Nona() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     const recognition = new SR()
     recognition.lang = profile.language || "en-GB"
-    recognition.continuous = false
+    recognition.continuous = true
     recognition.interimResults = true
+    recognitionRef.current = recognition
 
     setVoiceRecording(true)
+    setVoiceEditing(false)
     setVoiceStatus("listening")
     setVoiceTranscript("")
 
@@ -484,24 +518,42 @@ export default function Nona() {
 
     recognition.onend = async () => {
       setVoiceRecording(false)
-      const text = voiceTranscriptRef.current
-      if (!text?.trim()) {
+      recognitionRef.current = null
+      // Show editable transcript so user can correct before parsing
+      if (voiceTranscriptRef.current?.trim()) {
+        setVoiceEditing(true)
+        setVoiceStatus("edit")
+      } else {
         setVoiceStatus("")
-        return
       }
-      setVoiceStatus("thinking")
-      const newTasks = await parseTasksFromText(text)
-      setTasks(prev => [...newTasks, ...prev])
-      setVoiceTranscript("")
-      setVoiceStatus("")
     }
 
     recognition.onerror = () => {
       setVoiceRecording(false)
       setVoiceStatus("")
+      recognitionRef.current = null
     }
 
     recognition.start()
+  }
+
+  function stopVoiceCapture() {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop()
+      recognitionRef.current = null
+    }
+    setVoiceRecording(false)
+  }
+
+  async function confirmVoiceTasks() {
+    const text = voiceTranscriptRef.current
+    if (!text?.trim()) { setVoiceEditing(false); setVoiceStatus(""); return }
+    setVoiceEditing(false)
+    setVoiceStatus("thinking")
+    const newTasks = await parseTasksFromText(text)
+    setTasks(prev => [...newTasks, ...prev])
+    setVoiceTranscript("")
+    setVoiceStatus("")
   }
 
   // Ref to capture latest transcript value inside async callback
@@ -840,48 +892,58 @@ export default function Nona() {
 
               {/* Voice capture — primary input on home */}
               <div style={{ marginBottom: 20 }}>
-                <button
-                  onClick={startVoiceCapture}
-                  disabled={voiceRecording || voiceStatus === "thinking"}
-                  style={{
-                    width: "100%", background: voiceRecording ? "rgba(232,122,122,0.15)" : "var(--surface)",
-                    border: `1px solid ${voiceRecording ? "rgba(232,122,122,0.5)" : "var(--border)"}`,
-                    borderRadius: 14, padding: "16px 20px", cursor: "pointer",
-                    display: "flex", alignItems: "center", gap: 14, transition: "all 0.2s",
-                    animation: voiceRecording ? "pulse 1s infinite" : "none",
-                  }}
-                >
-                  <div style={{
-                    width: 44, height: 44, borderRadius: "50%", flexShrink: 0,
-                    background: voiceRecording ? "rgba(232,122,122,0.2)" : "var(--gold-dim)",
-                    border: `1.5px solid ${voiceRecording ? "rgba(232,122,122,0.6)" : "var(--gold-mid)"}`,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                  }}>
-                    <svg viewBox="0 0 24 24" fill="none" stroke={voiceRecording ? "#e87a7a" : "var(--gold)"} strokeWidth="2" strokeLinecap="round" width="20" height="20">
-                      <rect x="9" y="2" width="6" height="11" rx="3"/>
-                      <path d="M19 10v1a7 7 0 0 1-14 0v-1"/>
-                      <line x1="12" y1="19" x2="12" y2="22"/>
-                    </svg>
-                  </div>
-                  <div style={{ flex: 1, textAlign: "left" }}>
-                    <div style={{ fontSize: 14, color: voiceRecording ? "#e87a7a" : "var(--white)", fontWeight: 500 }}>
-                      {voiceStatus === "listening" ? "Listening…" : voiceStatus === "thinking" ? "Adding tasks…" : "What's on your mind?"}
-                    </div>
-                    <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
-                      {voiceTranscript || (voiceStatus === "" ? "Tap to speak — say anything" : "")}
+                {voiceEditing ? (
+                  <div style={{ background: "var(--surface)", border: "1px solid var(--gold-mid)", borderRadius: 14, padding: "16px 20px" }}>
+                    <div style={{ fontSize: 12, color: "var(--gold)", marginBottom: 8, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>✎ Edit before adding</div>
+                    <textarea className="input" style={{ width: "100%", minHeight: 64, fontSize: 14, marginBottom: 12 }}
+                      value={voiceTranscript} onChange={e => setVoiceTranscript(e.target.value)} autoFocus />
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button className="btn btn-gold" style={{ flex: 1, padding: "10px" }} onClick={confirmVoiceTasks}>Add tasks →</button>
+                      <button className="btn btn-outline" style={{ padding: "10px 16px" }} onClick={() => { setVoiceEditing(false); setVoiceTranscript(""); setVoiceStatus("") }}>Cancel</button>
                     </div>
                   </div>
-                  {voiceRecording && (
-                    <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
-                      {[0, 0.15, 0.3].map((delay, i) => (
-                        <div key={i} style={{
-                          width: 3, height: 16, borderRadius: 2, background: "#e87a7a",
-                          animation: `blink 0.8s ${delay}s infinite`,
-                        }} />
-                      ))}
+                ) : (
+                  <button
+                    onClick={voiceRecording ? stopVoiceCapture : startVoiceCapture}
+                    disabled={voiceStatus === "thinking"}
+                    style={{
+                      width: "100%", background: voiceRecording ? "rgba(232,122,122,0.15)" : "var(--surface)",
+                      border: `1px solid ${voiceRecording ? "rgba(232,122,122,0.5)" : "var(--border)"}`,
+                      borderRadius: 14, padding: "16px 20px", cursor: "pointer",
+                      display: "flex", alignItems: "center", gap: 14, transition: "all 0.2s",
+                    }}
+                  >
+                    <div style={{
+                      width: 44, height: 44, borderRadius: "50%", flexShrink: 0,
+                      background: voiceRecording ? "rgba(232,122,122,0.2)" : "var(--gold-dim)",
+                      border: `1.5px solid ${voiceRecording ? "rgba(232,122,122,0.6)" : "var(--gold-mid)"}`,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      {voiceRecording
+                        ? <svg viewBox="0 0 24 24" fill="#e87a7a" width="20" height="20"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                        : <svg viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="2" strokeLinecap="round" width="20" height="20">
+                            <rect x="9" y="2" width="6" height="11" rx="3"/>
+                            <path d="M19 10v1a7 7 0 0 1-14 0v-1"/><line x1="12" y1="19" x2="12" y2="22"/>
+                          </svg>
+                      }
                     </div>
-                  )}
-                </button>
+                    <div style={{ flex: 1, textAlign: "left" }}>
+                      <div style={{ fontSize: 14, color: voiceRecording ? "#e87a7a" : "var(--white)", fontWeight: 500 }}>
+                        {voiceRecording ? "Tap to stop recording" : voiceStatus === "thinking" ? "Adding tasks…" : "What's on your mind?"}
+                      </div>
+                      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+                        {voiceTranscript || (voiceStatus === "" ? "Tap to speak — say anything" : "")}
+                      </div>
+                    </div>
+                    {voiceRecording && (
+                      <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
+                        {[0, 0.15, 0.3].map((delay, i) => (
+                          <div key={i} style={{ width: 3, height: 16, borderRadius: 2, background: "#e87a7a", animation: `blink 0.8s ${delay}s infinite` }} />
+                        ))}
+                      </div>
+                    )}
+                  </button>
+                )}
               </div>
 
               {/* Tasks preview */}
@@ -1196,12 +1258,16 @@ export default function Nona() {
                           </div>
                         ) : (
                           <>
+                            {t.date && (
+                              <div style={{ fontSize: 11, color: "var(--gold)", fontWeight: 600, flexShrink: 0, minWidth: 48 }}>
+                                {new Date(t.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                              </div>
+                            )}
                             <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => setEditingTaskId(t.id)}>
                               <div className="task-text">{t.text}</div>
                               {t.description && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{t.description}</div>}
                             </div>
                             {t.fromEmail && <span className="task-email-badge">📧</span>}
-                            {t.date && taskGroupBy !== "date" && <span className="task-tag" style={{ color: "var(--white)", background: "transparent", border: "1px solid var(--border)" }}>{formatDateShort(t.date)}</span>}
                             {t.tag && <span className="task-tag">{t.tag}</span>}
                             <button className="task-del" onClick={() => deleteTask(t.id)}>×</button>
                           </>
@@ -1278,6 +1344,21 @@ export default function Nona() {
                   </div>
                 </div>
                 <button className="btn-sm" onClick={checkOutlookStatus}>Test</button>
+              </div>
+
+              <div style={{ marginTop: 24, marginBottom: 8 }}>
+                <div style={{ fontSize: 10, color: "var(--gold)", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>🚫 Email filter rules</div>
+                <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>These senders or subjects will never appear in triage again.</div>
+                {(profile.emailFilters || []).map((rule, i) => (
+                  <div key={i} className="settings-row" style={{ marginBottom: 6 }}>
+                    <div style={{ fontSize: 13, color: "var(--white)" }}>{rule}</div>
+                    <button className="btn-sm" style={{ fontSize: 11, color: "#e87a7a" }} onClick={() => setProfile(p => ({ ...p, emailFilters: p.emailFilters.filter((_, j) => j !== i) }))}>Remove</button>
+                  </div>
+                ))}
+                <button className="btn-sm" style={{ marginTop: 6 }} onClick={() => {
+                  const rule = prompt("Add filter rule — any email containing this sender name or subject will be permanently hidden:\n\nExamples: 'password change', 'Microsoft account team', 'no-reply@'")
+                  if (rule?.trim()) setProfile(p => ({ ...p, emailFilters: [...(p.emailFilters || []), rule.trim()] }))
+                }}>+ Add rule</button>
               </div>
 
               <div style={{ marginTop: 24 }}>

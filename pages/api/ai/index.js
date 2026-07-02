@@ -50,8 +50,11 @@ Return ONLY valid JSON, no markdown, no explanation:
   "urgent": [{"index": 1, "reason": "one short line — what and why"}],
   "action": [{"index": 2, "reason": "one short line — what action, by when if known"}],
   "tasks": ["concrete task extracted from an email, phrased as something to do"],
+  "calendar_events": [{"text": "short event title", "date": "2026-07-03", "source_index": 1}],
   "summary": "One line: how many emails actually need attention, or 'Nothing urgent' if genuinely true."
 }
+
+Also extract calendar_events: any email that mentions a specific date + event (booking confirmation, meeting, flight, lunch, appointment, delivery) should produce a calendar event with a short title and the resolved date. Use today's date to resolve relative dates ("tomorrow", "next Tuesday"). Only extract events with a clear specific date — not vague timeframes.
 
 Do not include an "fyi" bucket — if it's not worth action, don't surface it at all. Keep urgent and action arrays short — only real items, never pad them.`
     }
