@@ -45,7 +45,7 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 
 | Size | Feature | Notes |
 |------|---------|-------|
-| S | **Voice capture** | Big mic button on home screen. Tap → speak → AI parses to dated tasks. Web Speech API partially built. Primary input method on mobile. |
+| ✅ | **Voice capture** | Done — prominent mic button on home screen, real-time transcript, AI parses to dated tasks |
 | M | **Waiting for replies tracker** | Scans sent Gmail, finds threads with no reply after 5 days. "Still waiting on X recruiter since 12 Jun." Critical for job search. |
 | M | **Email → Calendar events with links** | Detect flights, hotel bookings, concert tickets, appointments from emails. Show in week calendar with tap-to-open link. "Flight to Nice 8 Jul 14:35 →" |
 | M | **Full email body reading** | Currently only 100-150 char previews — dates and amounts missed. Needed for accurate task/date extraction. |

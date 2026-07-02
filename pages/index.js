@@ -15,6 +15,23 @@ function saveState(s) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(s))
 }
 
+// Cache helpers — store AI results with timestamp, expire after maxHours
+function saveCache(key, value) {
+  if (typeof window === "undefined") return
+  try { localStorage.setItem(key, JSON.stringify({ value, ts: Date.now() })) } catch {}
+}
+
+function loadCache(key, maxHours) {
+  if (typeof window === "undefined") return null
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return null
+    const { value, ts } = JSON.parse(raw)
+    if (Date.now() - ts > maxHours * 60 * 60 * 1000) return null
+    return value
+  } catch { return null }
+}
+
 function guessTag(text) {
   const t = text.toLowerCase()
   if (/crèche|creche|timothée|timothee|school|swim|gym|pick.up|drop.off/.test(t)) return "family"
@@ -48,7 +65,7 @@ export default function Nona() {
   const [obCreche, setObCreche] = useState("")
   const [obWork, setObWork] = useState("")
 
-  const [profile, setProfile] = useState({ name: "", child: "", briefTime: "07:00", work: "", creche: "" })
+  const [profile, setProfile] = useState({ name: "", child: "", briefTime: "07:00", work: "", creche: "", language: "en-GB" })
   const [tasks, setTasks] = useState([])
   const [tab, setTab] = useState("home") // home | tasks | mail | settings
   const [weekOffset, setWeekOffset] = useState(0) // weeks from current week
@@ -91,8 +108,16 @@ export default function Nona() {
   useEffect(() => {
     if (onboarded) {
       fetchWeather()
-      generateBrief()
       checkOutlookStatus()
+      // Only regenerate brief if older than 6 hours
+      const cachedBrief = loadCache("nona_brief", 6)
+      if (cachedBrief) {
+        setBrief(cachedBrief)
+        setBriefLoading(false)
+      } else {
+        generateBrief()
+      }
+      // Triage loads on demand (Mail tab) — not on boot
     }
   }, [onboarded])
 
@@ -138,7 +163,17 @@ export default function Nona() {
   }
 
   // ── emails ───────────────────────────────────────────────────────────
-  async function fetchEmails() {
+  async function fetchEmails(force = false) {
+    // Load from cache if fresh (3 hours) and not forced
+    if (!force) {
+      const cached = loadCache("nona_triage", 3)
+      if (cached && cached.triage && cached.emails) {
+        setEmails(cached.emails)
+        setTriage(cached.triage)
+        setEmailLoading(false)
+        return
+      }
+    }
     setEmailLoading(true)
     setEmailError(null)
     try {
@@ -204,6 +239,7 @@ export default function Nona() {
       d.tasks = d.tasks || []
       d.summary = d.summary || `${emailList.length} emails loaded.`
       setTriage(d)
+      saveCache("nona_triage", { triage: d, emails: emailList })
       // Auto-add extracted tasks
       if (d.tasks?.length) {
         const newTasks = d.tasks.map(text => ({
@@ -298,12 +334,16 @@ export default function Nona() {
       })
       const d = await r.json()
       setBrief(d.text)
+      saveCache("nona_brief", d.text)
     } catch { setBrief("Couldn't load your brief. Check your connection.") }
     setBriefLoading(false)
   }
 
   // ── tasks ─────────────────────────────────────────────────────────────
   const [taskAdding, setTaskAdding] = useState(false)
+  const [voiceRecording, setVoiceRecording] = useState(false)
+  const [voiceTranscript, setVoiceTranscript] = useState("")
+  const [voiceStatus, setVoiceStatus] = useState("") // "listening" | "thinking" | ""
   const [taskGroupBy, setTaskGroupBy] = useState("date") // date | tag | none
   const [editingTaskId, setEditingTaskId] = useState(null)
 
@@ -365,6 +405,60 @@ export default function Nona() {
     }
     return `${first.toLocaleDateString("en-GB", { month: "short" })} – ${last.toLocaleDateString("en-GB", { month: "short" })}`
   }
+
+  function startVoiceCapture() {
+    if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
+      setVoiceStatus("Voice not supported — try Chrome on Android")
+      setTimeout(() => setVoiceStatus(""), 3000)
+      return
+    }
+
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    const recognition = new SR()
+    recognition.lang = profile.language || "en-GB"
+    recognition.continuous = false
+    recognition.interimResults = true
+
+    setVoiceRecording(true)
+    setVoiceStatus("listening")
+    setVoiceTranscript("")
+
+    recognition.onresult = (e) => {
+      const transcript = Array.from(e.results)
+        .map(r => r[0].transcript)
+        .join("")
+      setVoiceTranscript(transcript)
+    }
+
+    recognition.onend = async () => {
+      setVoiceRecording(false)
+      const text = voiceTranscriptRef.current
+      if (!text?.trim()) {
+        setVoiceStatus("")
+        return
+      }
+      setVoiceStatus("thinking")
+      const newTasks = await parseTasksFromText(text)
+      setTasks(prev => [...newTasks, ...prev])
+      setVoiceTranscript("")
+      setVoiceStatus("")
+    }
+
+    recognition.onerror = () => {
+      setVoiceRecording(false)
+      setVoiceStatus("")
+    }
+
+    recognition.start()
+  }
+
+  // Ref to capture latest transcript value inside async callback
+  const voiceTranscriptRef = typeof window !== "undefined"
+    ? { current: voiceTranscript }
+    : { current: "" }
+
+  // Keep ref in sync
+  if (typeof window !== "undefined") voiceTranscriptRef.current = voiceTranscript
 
   async function addTask() {
     const text = taskInput.trim()
@@ -656,7 +750,15 @@ export default function Nona() {
             {tab === "home" ? (
               <>
                 <span className="serif" style={{ fontSize: 24, color: "var(--gold)" }}>nona</span>
-                <span style={{ fontSize: 12, color: "var(--muted)" }}>{dateStr}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>{dateStr}</span>
+                  <button onClick={() => setTab("settings")} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 32, height: 32, borderRadius: "50%", background: "var(--surface)", border: "1px solid var(--border)" }} title="Settings">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="16" height="16">
+                      <circle cx="12" cy="12" r="3"/>
+                      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                    </svg>
+                  </button>
+                </div>
               </>
             ) : (
               <>
@@ -682,6 +784,52 @@ export default function Nona() {
                     {weatherIcon(weather.code)} {weather.temp !== null ? `${weather.temp}°` : "–"}
                   </div>
                 )}
+              </div>
+
+              {/* Voice capture — primary input on home */}
+              <div style={{ marginBottom: 20 }}>
+                <button
+                  onClick={startVoiceCapture}
+                  disabled={voiceRecording || voiceStatus === "thinking"}
+                  style={{
+                    width: "100%", background: voiceRecording ? "rgba(232,122,122,0.15)" : "var(--surface)",
+                    border: `1px solid ${voiceRecording ? "rgba(232,122,122,0.5)" : "var(--border)"}`,
+                    borderRadius: 14, padding: "16px 20px", cursor: "pointer",
+                    display: "flex", alignItems: "center", gap: 14, transition: "all 0.2s",
+                    animation: voiceRecording ? "pulse 1s infinite" : "none",
+                  }}
+                >
+                  <div style={{
+                    width: 44, height: 44, borderRadius: "50%", flexShrink: 0,
+                    background: voiceRecording ? "rgba(232,122,122,0.2)" : "var(--gold-dim)",
+                    border: `1.5px solid ${voiceRecording ? "rgba(232,122,122,0.6)" : "var(--gold-mid)"}`,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke={voiceRecording ? "#e87a7a" : "var(--gold)"} strokeWidth="2" strokeLinecap="round" width="20" height="20">
+                      <rect x="9" y="2" width="6" height="11" rx="3"/>
+                      <path d="M19 10v1a7 7 0 0 1-14 0v-1"/>
+                      <line x1="12" y1="19" x2="12" y2="22"/>
+                    </svg>
+                  </div>
+                  <div style={{ flex: 1, textAlign: "left" }}>
+                    <div style={{ fontSize: 14, color: voiceRecording ? "#e87a7a" : "var(--white)", fontWeight: 500 }}>
+                      {voiceStatus === "listening" ? "Listening…" : voiceStatus === "thinking" ? "Adding tasks…" : "What's on your mind?"}
+                    </div>
+                    <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+                      {voiceTranscript || (voiceStatus === "" ? "Tap to speak — say anything" : "")}
+                    </div>
+                  </div>
+                  {voiceRecording && (
+                    <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
+                      {[0, 0.15, 0.3].map((delay, i) => (
+                        <div key={i} style={{
+                          width: 3, height: 16, borderRadius: 2, background: "#e87a7a",
+                          animation: `blink 0.8s ${delay}s infinite`,
+                        }} />
+                      ))}
+                    </div>
+                  )}
+                </button>
               </div>
 
               {/* Tasks preview */}
@@ -773,12 +921,6 @@ export default function Nona() {
               <div style={{ background: "rgba(255,255,255,0.02)", border: "1px dashed rgba(232,200,122,0.1)", borderRadius: 12, padding: 18, marginBottom: 20, textAlign: "center", fontSize: 12, color: "rgba(245,240,232,0.3)" }}>
                 Connect Lidl or Aldi to track grocery spend
               </div>
-
-              <div style={{ textAlign: "center", paddingTop: 6, paddingBottom: 10 }}>
-                <button onClick={() => setTab("settings")} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted)" }}>
-                  ⚙ Settings
-                </button>
-              </div>
             </>}
 
             {/* ── EMAIL ── */}
@@ -827,7 +969,7 @@ export default function Nona() {
               ) : triage ? (<>
                 <div style={{ display: "flex", gap: 8, marginBottom: 16, justifyContent: "space-between", alignItems: "center" }}>
                   <span className="serif" style={{ fontSize: 18, color: "var(--white)" }}>{triage.summary || "Inbox checked"}</span>
-                  <button className="btn-sm" onClick={fetchEmails}>↺ Refresh</button>
+                  <button className="btn-sm" onClick={() => fetchEmails(true)}>↺ Refresh</button>
                 </div>
 
                 {triage.urgent?.length > 0 && (
@@ -921,7 +1063,7 @@ export default function Nona() {
                   <div style={{ fontSize: 32, marginBottom: 12 }}>📬</div>
                   Connected as {session.user?.email}
                   <br /><br />
-                  <button className="btn btn-gold" style={{ width: "auto", padding: "12px 24px" }} onClick={fetchEmails}>Load & triage my inbox</button>
+                  <button className="btn btn-gold" style={{ width: "auto", padding: "12px 24px" }} onClick={() => fetchEmails(true)}>Load & triage my inbox</button>
                 </div>
               )}
             </>}
@@ -1031,16 +1173,27 @@ export default function Nona() {
                   { icon: "👶", label: "Child", key: "child" },
                   { icon: "💼", label: "Work focus", key: "work" },
                   { icon: "⏰", label: "Brief time", key: "briefTime" },
+                  { icon: "🗣", label: "Voice language", key: "language" },
                 ].map(({ icon, label, key }) => (
                   <div key={key} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
                     <span style={{ fontSize: 18 }}>{icon}</span>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 2 }}>{label}</div>
-                      <div style={{ fontSize: 14 }}>{profile[key] || "—"}</div>
+                      <div style={{ fontSize: 14 }}>
+                        {key === "language"
+                          ? { "en-GB": "English", "fr-FR": "Français", "de-DE": "Deutsch", "ro-RO": "Română", "it-IT": "Italiano" }[profile[key]] || profile[key] || "English"
+                          : profile[key] || "—"}
+                      </div>
                     </div>
                     <button className="btn-sm" style={{ fontSize: 11, padding: "4px 10px" }} onClick={() => {
-                      const val = prompt(`Edit ${label}`, profile[key] || "")
-                      if (val !== null) setProfile(p => ({ ...p, [key]: val }))
+                      if (key === "language") {
+                        const langs = { "English": "en-GB", "Français": "fr-FR", "Deutsch": "de-DE", "Română": "ro-RO", "Italiano": "it-IT" }
+                        const choice = prompt("Choose language:\n1. English\n2. Français\n3. Deutsch\n4. Română\n5. Italiano\n\nType the language name:", "English")
+                        if (choice && langs[choice]) setProfile(p => ({ ...p, language: langs[choice] }))
+                      } else {
+                        const val = prompt(`Edit ${label}`, profile[key] || "")
+                        if (val !== null) setProfile(p => ({ ...p, [key]: val }))
+                      }
                     }}>edit</button>
                   </div>
                 ))}

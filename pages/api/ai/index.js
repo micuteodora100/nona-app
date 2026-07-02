@@ -146,9 +146,14 @@ Only include: tasks tagged "TODAY", tasks tagged "was due" (overdue, needs atten
 Maximum 5 bullets. If there's truly nothing pressing, say so in one line. Do not invent things to fill space. Format as a plain list, one item per line, starting each with "•".`
     }
 
+    // Use Haiku for simple structured extraction (cheap), Sonnet for brief and triage (quality matters)
+    const model = (type === "parse_tasks" || type === "email_to_task")
+      ? "claude-haiku-4-5-20251001"
+      : "claude-sonnet-4-6"
+
     const message = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 4000,
+      model,
+      max_tokens: type === "triage" ? 4000 : 1000,
       messages: [{ role: "user", content: prompt }],
     })
 
