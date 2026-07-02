@@ -230,7 +230,7 @@ export default function Nona() {
     setEmailError(null)
     try {
       const allEmails = []
-      // Gmail via OAuth (needs session)
+      // Gmail via OAuth
       if (session?.provider === "google") {
         const r = await fetch("/api/email/gmail")
         if (r.ok) {
@@ -238,14 +238,16 @@ export default function Nona() {
           allEmails.push(...(d.emails || []))
         }
       }
-      // Outlook via IMAP (always available if env vars set)
-      const ro = await fetch("/api/email/outlook")
-      if (ro.ok) {
-        const d = await ro.json()
-        allEmails.push(...(d.emails || []))
+      // Outlook via Microsoft Graph OAuth (proper OAuth, replaces IMAP)
+      if (session?.provider === "microsoft") {
+        const ro = await fetch("/api/email/outlook")
+        if (ro.ok) {
+          const d = await ro.json()
+          allEmails.push(...(d.emails || []))
+        }
       }
       if (allEmails.length === 0 && !session) {
-        setEmailError("Connect Gmail or configure Outlook to see your emails.")
+        setEmailError("Connect Gmail or Outlook to see your emails.")
         setEmailLoading(false)
         return
       }
@@ -1054,20 +1056,10 @@ export default function Nona() {
                     <span className="connect-icon">📧</span>
                     <div><div className="connect-label">Connect Gmail</div><div className="connect-sub">Read-only · Google OAuth</div></div>
                   </button>
-                  <div className={`connect-btn ${outlookStatus?.ok ? "connected" : ""}`}>
+                  <button className="connect-btn" onClick={() => signIn("microsoft")}>
                     <span className="connect-icon">📮</span>
-                    <div>
-                      <div className="connect-label">Outlook</div>
-                      <div className="connect-sub">
-                        {outlookStatus === null ? "Checking…" :
-                         outlookStatus.ok ? `Connected · ${outlookStatus.email}` :
-                         `Not connected — ${outlookStatus.error}`}
-                      </div>
-                    </div>
-                    <span className={`connect-status ${outlookStatus?.ok ? "on" : ""}`}>
-                      {outlookStatus === null ? "…" : outlookStatus.ok ? "✓ Ready" : "✕ Error"}
-                    </span>
-                  </div>
+                    <div><div className="connect-label">Connect Outlook</div><div className="connect-sub">Read-only · Microsoft OAuth · teodoramicu@outlook.com</div></div>
+                  </button>
                 </div>
               ) : emailLoading ? (
                 <div className="card card-accent">
@@ -1319,7 +1311,7 @@ export default function Nona() {
               </div>
 
               <div style={{ fontSize: 10, color: "var(--gold)", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, marginBottom: 8, padding: "0 4px" }}>Email</div>
-              {session ? (
+              {session?.provider === "google" ? (
                 <div className="settings-row">
                   <div>
                     <div style={{ fontSize: 14 }}>Gmail connected</div>
@@ -1330,21 +1322,24 @@ export default function Nona() {
               ) : (
                 <div className="settings-row">
                   <div style={{ fontSize: 14 }}>Gmail not connected</div>
-                  <button className="btn-sm" onClick={() => setTab("mail")}>Connect →</button>
+                  <button className="btn-sm" onClick={() => signIn("google")}>Connect →</button>
                 </div>
               )}
 
-              <div className="settings-row">
-                <div>
-                  <div style={{ fontSize: 14 }}>
-                    Outlook {outlookStatus?.ok ? "connected" : outlookStatus === null ? "checking…" : "not connected"}
+              {session?.provider === "microsoft" ? (
+                <div className="settings-row">
+                  <div>
+                    <div style={{ fontSize: 14 }}>Outlook connected ✓</div>
+                    <div style={{ fontSize: 12, color: "var(--muted)" }}>{session.user?.email}</div>
                   </div>
-                  <div style={{ fontSize: 12, color: outlookStatus?.ok ? "var(--muted)" : "#e87a7a" }}>
-                    {outlookStatus === null ? "—" : outlookStatus.ok ? outlookStatus.email : outlookStatus.error}
-                  </div>
+                  <button className="btn-sm" onClick={() => signOut()}>Disconnect</button>
                 </div>
-                <button className="btn-sm" onClick={checkOutlookStatus}>Test</button>
-              </div>
+              ) : (
+                <div className="settings-row">
+                  <div style={{ fontSize: 14 }}>Outlook not connected</div>
+                  <button className="btn-sm" onClick={() => signIn("microsoft")}>Connect →</button>
+                </div>
+              )}
 
               <div style={{ marginTop: 24, marginBottom: 8 }}>
                 <div style={{ fontSize: 10, color: "var(--gold)", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>🚫 Email filter rules</div>

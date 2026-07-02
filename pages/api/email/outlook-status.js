@@ -1,44 +1,27 @@
-import Imap from "imap"
+import { getServerSession } from "next-auth"
+import { authOptions } from "../auth/[...nextauth]"
 
-// Quick connection test — connects, checks inbox exists, disconnects. No email fetching.
-function testConnection() {
-  return new Promise((resolve) => {
-    if (!process.env.OUTLOOK_EMAIL || !process.env.OUTLOOK_PASSWORD) {
-      return resolve({ ok: false, error: "Outlook credentials not set in environment variables." })
+// Test Microsoft Graph connection using current session token
+export default async function handler(req, res) {
+  const session = await getServerSession(req, res, authOptions)
+
+  if (!session || session.provider !== "microsoft") {
+    return res.json({ ok: false, error: "Not connected with Microsoft account" })
+  }
+
+  try {
+    const response = await fetch("https://graph.microsoft.com/v1.0/me", {
+      headers: { Authorization: `Bearer ${session.accessToken}` },
+    })
+
+    if (!response.ok) {
+      const err = await response.text()
+      return res.json({ ok: false, error: `Graph API error: ${response.status}` })
     }
 
-    const imap = new Imap({
-      user: process.env.OUTLOOK_EMAIL,
-      password: process.env.OUTLOOK_PASSWORD,
-      host: "outlook.office365.com",
-      port: 993,
-      tls: true,
-      tlsOptions: { rejectUnauthorized: false },
-      authTimeout: 8000,
-      connTimeout: 8000,
-    })
-
-    const timer = setTimeout(() => {
-      try { imap.destroy() } catch {}
-      resolve({ ok: false, error: "Connection timed out." })
-    }, 9000)
-
-    imap.once("error", (err) => {
-      clearTimeout(timer)
-      resolve({ ok: false, error: err.message })
-    })
-
-    imap.once("ready", () => {
-      clearTimeout(timer)
-      imap.end()
-      resolve({ ok: true, email: process.env.OUTLOOK_EMAIL })
-    })
-
-    imap.connect()
-  })
-}
-
-export default async function handler(req, res) {
-  const result = await testConnection()
-  res.json(result)
+    const profile = await response.json()
+    return res.json({ ok: true, email: profile.mail || profile.userPrincipalName })
+  } catch (err) {
+    return res.json({ ok: false, error: err.message })
+  }
 }

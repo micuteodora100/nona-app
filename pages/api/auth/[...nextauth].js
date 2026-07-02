@@ -1,9 +1,8 @@
 import NextAuth from "next-auth"
 import GoogleProvider from "next-auth/providers/google"
 
-// Microsoft personal accounts (outlook.com, hotmail.com, live.com)
-// Uses /consumers endpoint — no Azure Portal needed, just a free app registration
-// at https://apps.dev.microsoft.com (the old portal) or via apps.microsoft.com
+// Microsoft personal accounts via OAuth 2.0 + Microsoft Graph API
+// Uses /consumers endpoint for personal @outlook.com/@hotmail.com accounts
 const MicrosoftPersonalProvider = {
   id: "microsoft",
   name: "Microsoft",
