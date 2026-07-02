@@ -216,6 +216,28 @@ export default function Nona() {
     }
   }
 
+  function dismissEmail(email) {
+    const key = `${email.from}::${email.subject}`
+    // Add to handled list so it never appears in triage or tasks again
+    setHandledEmails(prev => {
+      const next = new Set(prev)
+      next.add(key)
+      try { localStorage.setItem("nona_handled_emails", JSON.stringify([...next])) } catch {}
+      return next
+    })
+    // Remove from triage display immediately
+    setTriage(prev => {
+      if (!prev) return prev
+      const filterOut = (arr) => arr?.filter(item => {
+        const e = emails[item.index - 1]
+        return e ? `${e.from}::${e.subject}` !== key : true
+      })
+      return { ...prev, urgent: filterOut(prev.urgent), action: filterOut(prev.action) }
+    })
+    // Also mark any tasks from this email as done
+    setTasks(prev => prev.map(t => t.emailKey === key ? { ...t, done: true } : t))
+  }
+
   async function addEmailAsTask(email, index) {
     const dupeKey = `${email.from}::${email.subject}`
     // Skip if already handled (task was previously completed) or already exists in current session
@@ -815,9 +837,12 @@ export default function Nona() {
                       const e = emails[item.index - 1]
                       return e ? (
                         <div key={item.index} className="triage-item" style={{ borderColor: "rgba(232,122,122,0.2)" }}>
-                          <div className="triage-from">{e.from?.split("<")[0]?.trim()}</div>
-                          <div className="triage-subject">{e.subject}</div>
-                          <div className="triage-reason">{item.reason}</div>
+                          <div style={{ flex: 1 }}>
+                            <div className="triage-from">{e.from?.split("<")[0]?.trim()}</div>
+                            <div className="triage-subject">{e.subject}</div>
+                            <div className="triage-reason">{item.reason}</div>
+                          </div>
+                          <button className="task-del" style={{ fontSize: 18, marginLeft: 8, alignSelf: "flex-start" }} onClick={() => dismissEmail(e)} title="Dismiss permanently">×</button>
                         </div>
                       ) : null
                     })}
@@ -831,9 +856,12 @@ export default function Nona() {
                       const e = emails[item.index - 1]
                       return e ? (
                         <div key={item.index} className="triage-item">
-                          <div className="triage-from">{e.from?.split("<")[0]?.trim()}</div>
-                          <div className="triage-subject">{e.subject}</div>
-                          <div className="triage-reason">{item.reason}</div>
+                          <div style={{ flex: 1 }}>
+                            <div className="triage-from">{e.from?.split("<")[0]?.trim()}</div>
+                            <div className="triage-subject">{e.subject}</div>
+                            <div className="triage-reason">{item.reason}</div>
+                          </div>
+                          <button className="task-del" style={{ fontSize: 18, marginLeft: 8, alignSelf: "flex-start" }} onClick={() => dismissEmail(e)} title="Dismiss permanently">×</button>
                         </div>
                       ) : null
                     })}
