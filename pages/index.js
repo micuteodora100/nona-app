@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { useSession, signIn, signOut } from "next-auth/react"
 import Head from "next/head"
+import { supabase } from "../lib/supabase"
 
 // ── helpers ──────────────────────────────────────────────────────────────
 const STORAGE_KEY = "nona_v2"
@@ -81,6 +82,19 @@ export default function Nona() {
   const { data: session } = useSession()
 
   const [onboarded, setOnboarded] = useState(false)
+  const [supabaseUser, setSupabaseUser] = useState(null)
+
+  // Listen for Supabase auth state changes
+  useEffect(() => {
+    if (!supabase) return
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSupabaseUser(session?.user || null)
+    })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSupabaseUser(session?.user || null)
+    })
+    return () => subscription.unsubscribe()
+  }, [])
   const [obStep, setObStep] = useState(1)
   const [obName, setObName] = useState("")
   const [obChild, setObChild] = useState("")
@@ -1075,7 +1089,7 @@ export default function Nona() {
               ) : triage ? (<>
                 <div style={{ display: "flex", gap: 8, marginBottom: 16, justifyContent: "space-between", alignItems: "center" }}>
                   <span className="serif" style={{ fontSize: 18, color: "var(--white)" }}>{triage.summary || "Inbox checked"}</span>
-                  <button className="btn-sm" onClick={() => fetchEmails(true)}>↺ Refresh</button>
+                  <button className="btn-sm" onClick={() => { try { localStorage.removeItem("nona_triage") } catch {} fetchEmails(true) }}>↺ Refresh</button>
                 </div>
 
                 {triage.urgent?.length > 0 && (
@@ -1357,7 +1371,7 @@ export default function Nona() {
               </div>
 
               <div style={{ marginTop: 24 }}>
-                <button className="btn btn-outline" onClick={() => { if (confirm("Reset everything?")) { localStorage.clear(); window.location.reload() } }}>
+                <button className="btn btn-outline" onClick={async () => { if (confirm("Reset everything?")) { localStorage.clear(); if (supabase) await supabase.auth.signOut(); window.location.reload() } }}>
                   Reset Nona
                 </button>
               </div>

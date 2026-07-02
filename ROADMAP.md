@@ -40,7 +40,7 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 
 | Size | Feature | Notes |
 |------|---------|-------|
-| XL | **Outlook connection** | Biggest blocker for daily use. Options: (1) Supabase Azure OAuth provider — redirect goes to Supabase, simpler than direct Azure; (2) Azure app registration pointing at Supabase callback URL. Need to configure in Supabase Dashboard → Authentication → Providers → Azure. |
+| ✅ | **Outlook connection** | Done — Microsoft Graph API via proper OAuth 2.0. Azure app registered, MICROSOFT_CLIENT_ID + MICROSOFT_CLIENT_SECRET in Vercel. Personal Microsoft accounts only. Mail.Read scope. Options: (1) Supabase Azure OAuth provider — redirect goes to Supabase, simpler than direct Azure; (2) Azure app registration pointing at Supabase callback URL. Need to configure in Supabase Dashboard → Authentication → Providers → Azure. |
 
 ---
 
@@ -56,7 +56,7 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 | S | **Tasks: add to calendar button** | Calendar icon on any task with a date. Tap → task appears in week view. |
 | M | **Full email body reading** | Currently only 100-150 char previews — dates and booking details missed. Needed for calendar auto-detection to work well. |
 | S | **AI context survey on first open** | 5 questions + scan 90 days emails → build personal context profile. Makes brief and triage more personalised. |
-| XL | **Supabase auth — proper login** | Email + password per user. Replaces shared APP_PASSWORD. Required before sharing with others. |
+| XL | **Supabase auth — proper login** | Email + password per user. Replaces shared APP_PASSWORD. Required before sharing with others. Moving to P0 — building now. |
 
 ---
 

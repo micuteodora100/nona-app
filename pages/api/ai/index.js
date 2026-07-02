@@ -56,6 +56,8 @@ Return ONLY valid JSON, no markdown, no explanation:
 
 Also extract calendar_events: any email that mentions a specific date + event (booking confirmation, meeting, flight, lunch, appointment, delivery) should produce a calendar event with a short title and the resolved date. Use today's date to resolve relative dates ("tomorrow", "next Tuesday"). Only extract events with a clear specific date — not vague timeframes.
 
+For the tasks array: for EVERY email in urgent or action, extract at least one concrete task phrased as something to do. E.g. "Reply to Maria about contract renewal", "Pay invoice from BGL", "Confirm dentist appointment for 8 Jul". Do not leave tasks empty if there are action items.
+
 Do not include an "fyi" bucket — if it's not worth action, don't surface it at all. Keep urgent and action arrays short — only real items, never pad them.`
     }
 
