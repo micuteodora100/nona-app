@@ -63,6 +63,10 @@ export default function Nona() {
   const [emailError, setEmailError] = useState(null)
   const [showAllEmails, setShowAllEmails] = useState(false)
   const [addedTaskIndices, setAddedTaskIndices] = useState([])
+  const [handledEmails, setHandledEmails] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("nona_handled_emails") || "[]")) }
+    catch { return new Set() }
+  })
   const [outlookStatus, setOutlookStatus] = useState(null) // null=unchecked, {ok, error/email}
 
   const [taskInput, setTaskInput] = useState("")
@@ -173,13 +177,16 @@ export default function Nona() {
   }
 
   async function triageEmails(emailList) {
+    // Filter out emails already handled (task was completed) before sending to AI
+    const filteredList = emailList.filter(e => !handledEmails.has(`${e.from}::${e.subject}`))
+    const listToTriage = filteredList.length > 0 ? filteredList : emailList
     try {
       const r = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "triage",
-          emails: emailList,
+          emails: listToTriage,
           context: { name: profile.name || "Teodora", child: profile.child || "Timothée" },
         }),
       })
@@ -210,10 +217,9 @@ export default function Nona() {
   }
 
   async function addEmailAsTask(email, index) {
-    // Prevent duplicates: check if a task from this exact email (same subject + sender) already exists
     const dupeKey = `${email.from}::${email.subject}`
-    const alreadyExists = tasks.some(t => t.emailKey === dupeKey)
-    if (alreadyExists) {
+    // Skip if already handled (task was previously completed) or already exists in current session
+    if (handledEmails.has(dupeKey) || tasks.some(t => t.emailKey === dupeKey)) {
       setAddedTaskIndices(prev => [...prev, index])
       return
     }
@@ -349,7 +355,20 @@ export default function Nona() {
   }
 
   function toggleTask(id) {
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !t.done } : t))
+    setTasks(prev => prev.map(t => {
+      if (t.id !== id) return t
+      const nowDone = !t.done
+      // If marking done and came from email, remember that email as handled
+      if (nowDone && t.emailKey) {
+        setHandledEmails(prev => {
+          const next = new Set(prev)
+          next.add(t.emailKey)
+          try { localStorage.setItem("nona_handled_emails", JSON.stringify([...next])) } catch {}
+          return next
+        })
+      }
+      return { ...t, done: nowDone }
+    }))
   }
 
   function deleteTask(id) {
