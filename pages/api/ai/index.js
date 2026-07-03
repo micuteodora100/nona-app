@@ -16,8 +16,11 @@ export default async function handler(req, res) {
     let prompt = ""
 
     if (type === "triage") {
+      // was: e.snippet.slice(0, 150) — only a 150-char preview.
+      // Now uses the full(er) body from gmail.js/outlook.js (up to 3000 chars
+      // each), falling back to snippet for any email that lacks it.
       const emailList = emails
-        .map((e, i) => `[${i + 1}] From: ${e.from}\nSubject: ${e.subject}\nPreview: ${(e.snippet || "").slice(0, 150)}`)
+        .map((e, i) => `[${i + 1}] From: ${e.from}\nSubject: ${e.subject}\nContent: ${(e.body || e.snippet || "").slice(0, 1200)}`)
         .join("\n\n")
 
       const todayStr = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })
@@ -65,13 +68,16 @@ Do not include an "fyi" bucket — if it's not worth action, don't surface it at
       const email = req.body.email || {}
       const todayStr = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })
 
+      // was: email.snippet only (150 chars) — now uses full body when available
+      const content = (email.body || email.snippet || "").slice(0, 1200)
+
       prompt = `Today's actual date is ${todayStr}.
 
 Turn this email into ONE clear, actionable task for the recipient.
 
 From: ${email.from}
 Subject: ${email.subject}
-Content: ${email.snippet}
+Content: ${content}
 
 Rules:
 - "text": a short, specific task title (under 10 words if possible) describing what the recipient needs to DO — not a summary. E.g. "Reply to Maria about contract" not "Email from Maria about contract."
