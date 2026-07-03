@@ -2,6 +2,55 @@ import { getServerSession } from "next-auth"
 import { authOptions } from "../auth/[...nextauth]"
 import { google } from "googleapis"
 
+// Decode Gmail's base64url body parts into plain text, walking nested MIME parts
+function extractBody(payload) {
+  if (!payload) return ""
+
+  function decode(data) {
+    if (!data) return ""
+    try {
+      return Buffer.from(data, "base64").toString("utf-8")
+    } catch {
+      return ""
+    }
+  }
+
+  function stripHtml(html) {
+    return html
+      .replace(/<style[\s\S]*?<\/style>/gi, "")
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  }
+
+  // Direct body on this part
+  if (payload.mimeType === "text/plain" && payload.body?.data) {
+    return decode(payload.body.data)
+  }
+  if (payload.mimeType === "text/html" && payload.body?.data) {
+    return stripHtml(decode(payload.body.data))
+  }
+
+  // Walk nested parts, preferring text/plain
+  if (payload.parts?.length) {
+    const plain = payload.parts.find((p) => p.mimeType === "text/plain" && p.body?.data)
+    if (plain) return decode(plain.body.data)
+
+    const html = payload.parts.find((p) => p.mimeType === "text/html" && p.body?.data)
+    if (html) return stripHtml(decode(html.body.data))
+
+    // Recurse into multipart/alternative or multipart/mixed
+    for (const part of payload.parts) {
+      const nested = extractBody(part)
+      if (nested) return nested
+    }
+  }
+
+  return ""
+}
+
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions)
   if (!session || session.provider !== "google") {
@@ -30,25 +79,30 @@ export default async function handler(req, res) {
       return res.json({ emails: [], source: "gmail" })
     }
 
-    // Fetch each message's metadata + snippet
+    // Fetch each message's full content (was: format "metadata" — 150-char snippet only)
     const emails = await Promise.all(
       messages.slice(0, 100).map(async (msg) => {
         const detail = await gmail.users.messages.get({
           userId: "me",
           id: msg.id,
-          format: "metadata",
-          metadataHeaders: ["From", "Subject", "Date"],
+          format: "full",
         })
 
         const headers = detail.data.payload.headers
         const get = (name) => headers.find((h) => h.name === name)?.value || ""
+
+        const fullBody = extractBody(detail.data.payload)
+        // Cap at ~3000 chars to keep AI prompt cost/latency reasonable —
+        // still ~20x more context than the old 150-char preview.
+        const body = fullBody.slice(0, 3000)
 
         return {
           id: msg.id,
           from: get("From"),
           subject: get("Subject"),
           date: get("Date"),
-          snippet: detail.data.snippet || "",
+          snippet: detail.data.snippet || "", // short preview, still used for UI cards
+          body,                                // full(er) content, used for AI triage/parsing
           source: "gmail",
         }
       })
