@@ -41,8 +41,16 @@ export async function middleware(req) {
   }
 
   // Check Supabase session cookie (new proper auth)
-  // Supabase stores session in sb-{project-ref}-auth-token cookie
-  const supabaseCookies = [...req.cookies.getAll()].filter(c => c.name.startsWith("sb-") && c.name.endsWith("-auth-token"))
+  // Supabase stores session in a "sb-{project-ref}-auth-token" cookie.
+  // FIX: when the JWT is large (e.g. carrying both Google + Microsoft Graph
+  // tokens), Supabase's browser client CHUNKS it into
+  // "sb-{ref}-auth-token.0", ".1", etc. The old endsWith("-auth-token")
+  // check missed these chunked cookies entirely, silently treating a
+  // logged-in user as logged-out. Using includes() catches both the
+  // single-cookie and chunked cases.
+  const supabaseCookies = [...req.cookies.getAll()].filter(
+    (c) => c.name.startsWith("sb-") && c.name.includes("-auth-token")
+  )
   if (supabaseCookies.length > 0) {
     return NextResponse.next()
   }
