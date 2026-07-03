@@ -16,11 +16,13 @@ export default async function handler(req, res) {
     let prompt = ""
 
     if (type === "triage") {
-      // was: e.snippet.slice(0, 150) — only a 150-char preview.
-      // Now uses the full(er) body from gmail.js/outlook.js (up to 3000 chars
-      // each), falling back to snippet for any email that lacks it.
+      // was: 1200 chars/email — with up to 100 emails, that made the triage
+      // prompt large enough to push the whole request past Vercel's
+      // serverless timeout, which is what caused "Failed to fetch." 400
+      // chars still gives far more context than the original 150-char
+      // snippet while keeping the whole call fast enough to finish in time.
       const emailList = emails
-        .map((e, i) => `[${i + 1}] From: ${e.from}\nSubject: ${e.subject}\nContent: ${(e.body || e.snippet || "").slice(0, 1200)}`)
+        .map((e, i) => `[${i + 1}] From: ${e.from}\nSubject: ${e.subject}\nContent: ${(e.body || e.snippet || "").slice(0, 400)}`)
         .join("\n\n")
 
       const todayStr = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })
