@@ -337,6 +337,7 @@ export default function Nona() {
             done: false,
             tag: "family",
             fromEmail: true,
+            isEvent: true, // scheduled event, not an action item — must not show in Tasks lists (locked decision)
           }))
         setTasks(prev => {
           // Only add if not already in tasks (dedup by text+date)
@@ -618,6 +619,7 @@ export default function Nona() {
   const TAG_OPTIONS = ["family", "work", "health", "errands"]
 
   const filteredTasks = tasks.filter(t => {
+    if (t.isEvent) return false // scheduled events live in the calendar, not the Tasks list
     if (taskFilter === "done") return t.done
     if (taskFilter === "all") return !t.done
     return !t.done && t.tag === taskFilter
@@ -968,9 +970,9 @@ export default function Nona() {
                 <button onClick={() => setTab("tasks")} style={{ fontSize: 11, color: "var(--muted)" }}>View all ›</button>
               </div>
               <div className="card" style={{ padding: "4px 18px", marginBottom: 20 }}>
-                {tasks.filter(t => !t.done).length === 0 ? (
+                {tasks.filter(t => !t.done && !t.isEvent).length === 0 ? (
                   <div style={{ padding: "14px 0", fontSize: 13, color: "var(--muted)" }}>Nothing pending — add something on the Tasks page.</div>
-                ) : tasks.filter(t => !t.done).slice(0, 4).map((t, i, arr) => (
+                ) : tasks.filter(t => !t.done && !t.isEvent).slice(0, 4).map((t, i, arr) => (
                   <div key={t.id} className="task" style={{ margin: 0, background: "transparent", border: "none", borderRadius: 0, padding: "11px 0", borderBottom: i < arr.length - 1 ? "1px solid var(--border)" : "none" }}>
                     <div className="task-check" onClick={() => toggleTask(t.id)}>
                       {t.done && <svg viewBox="0 0 24 24" fill="none" stroke="#0D0C0A" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" width="12" height="12"><polyline points="20 6 9 17 4 12" /></svg>}
