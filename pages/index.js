@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react"
 import { useSession, signIn, signOut } from "next-auth/react"
 import Head from "next/head"
 import { supabase } from "../lib/supabase"
+import { subscribeToPush, unsubscribeFromPush, getPushPermissionState } from "../lib/push-client"
 
 // ── helpers ──────────────────────────────────────────────────────────────
 const STORAGE_KEY = "nona_v2"
@@ -83,6 +84,8 @@ export default function Nona() {
 
   const [onboarded, setOnboarded] = useState(false)
   const [supabaseUser, setSupabaseUser] = useState(null)
+  const [pushEnabled, setPushEnabled] = useState(false)
+  const [pushBusy, setPushBusy] = useState(false)
 
   // Listen for Supabase auth state changes
   useEffect(() => {
@@ -95,6 +98,27 @@ export default function Nona() {
     })
     return () => subscription.unsubscribe()
   }, [])
+
+  useEffect(() => {
+    getPushPermissionState().then((state) => setPushEnabled(state === "granted"))
+  }, [])
+
+  async function handleTogglePush() {
+    setPushBusy(true)
+    try {
+      if (pushEnabled) {
+        await unsubscribeFromPush()
+        setPushEnabled(false)
+      } else {
+        await subscribeToPush()
+        setPushEnabled(true)
+      }
+    } catch (err) {
+      alert(err.message)
+    } finally {
+      setPushBusy(false)
+    }
+  }
   const [obStep, setObStep] = useState(1)
   const [obName, setObName] = useState("")
   const [obChild, setObChild] = useState("")
@@ -1324,6 +1348,26 @@ export default function Nona() {
                   </div>
                 ))}
                 <div style={{ paddingTop: 10 }} />
+              </div>
+
+              <div style={{ marginBottom: 20 }}>
+                <button
+                  onClick={handleTogglePush}
+                  disabled={pushBusy}
+                  className="btn-sm"
+                  style={{
+                    width: "100%",
+                    padding: "14px 16px",
+                    borderRadius: 12,
+                    background: "var(--surface)",
+                    border: "1px solid var(--border)",
+                    color: "var(--white)",
+                    textAlign: "left",
+                    fontSize: 15,
+                  }}
+                >
+                  {pushBusy ? "Working…" : pushEnabled ? "🔔 Morning reminders: On" : "🔕 Enable morning reminders"}
+                </button>
               </div>
 
               <div style={{ fontSize: 10, color: "var(--gold)", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, marginBottom: 8, padding: "0 4px" }}>Email</div>
