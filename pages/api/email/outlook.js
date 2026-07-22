@@ -41,7 +41,8 @@ async function extractPdfTextFromMessage(messageId, accessToken) {
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions)
 
-  if (!session || session.provider !== "microsoft") {
+  const microsoftAuth = session?.providers?.microsoft
+  if (!microsoftAuth) {
     return res.status(401).json({ error: "Not authenticated with Microsoft" })
   }
 
@@ -62,7 +63,7 @@ export default async function handler(req, res) {
       `&$orderby=receivedDateTime desc`,
       {
         headers: {
-          Authorization: `Bearer ${session.accessToken}`,
+          Authorization: `Bearer ${microsoftAuth.accessToken}`,
           "Content-Type": "application/json",
         },
       }
@@ -90,7 +91,7 @@ export default async function handler(req, res) {
         let hasPdf = false
         if (msg.hasAttachments && pdfFetchCount < MAX_PDF_FETCHES) {
           pdfFetchCount++
-          const pdfText = await extractPdfTextFromMessage(msg.id, session.accessToken)
+          const pdfText = await extractPdfTextFromMessage(msg.id, microsoftAuth.accessToken)
           if (pdfText) {
             hasPdf = true
             body += `\n\n[Attachment]\n${pdfText}`
