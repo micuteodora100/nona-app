@@ -268,12 +268,17 @@ export default function Nona() {
     setEmailError(null)
     try {
       const allEmails = []
+      const fetchErrors = []
       // Gmail via OAuth
       if (session?.provider === "google") {
         const r = await fetch("/api/email/gmail")
         if (r.ok) {
           const d = await r.json()
           allEmails.push(...(d.emails || []))
+        } else {
+          const errText = await r.text().catch(() => r.statusText)
+          fetchErrors.push(`Gmail: ${errText.slice(0, 200)}`)
+          console.error("Gmail fetch failed:", r.status, errText)
         }
       }
       // Outlook via Microsoft Graph OAuth (proper OAuth, replaces IMAP)
@@ -282,10 +287,21 @@ export default function Nona() {
         if (ro.ok) {
           const d = await ro.json()
           allEmails.push(...(d.emails || []))
+        } else {
+          const errText = await ro.text().catch(() => ro.statusText)
+          fetchErrors.push(`Outlook: ${errText.slice(0, 200)}`)
+          console.error("Outlook fetch failed:", ro.status, errText)
         }
       }
       if (allEmails.length === 0 && !session) {
         setEmailError("Connect Gmail or Outlook to see your emails.")
+        setEmailLoading(false)
+        return
+      }
+      if (allEmails.length === 0 && fetchErrors.length > 0) {
+        // Previously this failed silently — no emails, no error, no triage, and
+        // no indication anything had gone wrong. Now it's surfaced explicitly.
+        setEmailError(`Couldn't load email: ${fetchErrors.join(" · ")}`)
         setEmailLoading(false)
         return
       }
@@ -333,16 +349,22 @@ export default function Nona() {
       try {
         d = JSON.parse(text)
       } catch(e) {
-        // AI returned non-JSON, create a minimal triage object
-        d = { urgent: [], action: [], tasks: [], summary: text.slice(0, 300) }
+        // The HTTP response body itself wasn't even valid JSON — genuine network/server failure
+        d = { urgent: [], action: [], tasks: [], summary: null, error: `Triage failed: server returned an unreadable response (${text.slice(0, 150)})` }
+      }
+      // If the AI endpoint itself reported a failure (e.g. Claude's output didn't parse as JSON),
+      // that used to get silently treated as "0 urgent, 0 action" with a fake-looking summary.
+      // Surface it as a real error instead — a blank inbox and a broken triage call must never look the same.
+      if (!r.ok || d.error) {
+        d = { urgent: [], action: [], tasks: [], summary: null, error: d.error || `Triage failed (HTTP ${r.status})` }
       }
       // Ensure all expected fields exist
       d.urgent = d.urgent || []
       d.action = d.action || []
       d.tasks = d.tasks || []
-      d.summary = d.summary || `${emailList.length} emails loaded.`
+      d.summary = d.summary || (d.error ? null : `${emailList.length} emails loaded.`)
       setTriage(d)
-      saveCache("nona_triage", { triage: d, emails: emailList })
+      if (!d.error) saveCache("nona_triage", { triage: d, emails: emailList })
       // Auto-add extracted tasks
       if (d.tasks?.length) {
         const newTasks = d.tasks.map(text => ({
@@ -1055,8 +1077,8 @@ export default function Nona() {
                 <button onClick={() => { setTab("mail"); if (!triage) fetchEmails() }} style={{ fontSize: 11, color: "var(--muted)" }}>View all ›</button>
               </div>
               <div className="card" style={{ marginBottom: 20, cursor: "pointer" }} onClick={() => { setTab("mail"); if (!triage) fetchEmails() }}>
-                <div style={{ fontSize: 13, color: "var(--white)" }}>
-                  {triage?.summary || "Tap to check your inbox"}
+                <div style={{ fontSize: 13, color: triage?.error ? "#e87a7a" : "var(--white)" }}>
+                  {triage?.error ? "⚠ Inbox check failed — tap for details" : (triage?.summary || "Tap to check your inbox")}
                 </div>
               </div>
 
@@ -1111,6 +1133,12 @@ export default function Nona() {
                   <span className="label" style={{ color: "#e87a7a" }}>Error loading emails</span>
                   <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>{emailError}</p>
                   <button className="btn-sm" onClick={fetchEmails}>Try again</button>
+                </div>
+              ) : triage?.error ? (
+                <div className="card" style={{ borderColor: "rgba(232,122,122,0.3)" }}>
+                  <span className="label" style={{ color: "#e87a7a" }}>Inbox triage failed</span>
+                  <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>{triage.error}</p>
+                  <button className="btn-sm" onClick={() => { try { localStorage.removeItem("nona_triage") } catch {} fetchEmails(true) }}>Try again</button>
                 </div>
               ) : triage ? (<>
                 <div style={{ display: "flex", gap: 8, marginBottom: 16, justifyContent: "space-between", alignItems: "center" }}>
