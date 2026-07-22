@@ -177,7 +177,7 @@ Maximum 5 bullets. If there's truly nothing pressing, say so in one line. Do not
         const parsed = JSON.parse(text)
         return res.json(parsed)
       } catch {
-        return res.json({ error: "Parse failed", raw: text })
+        return res.status(500).json({ error: "AI returned invalid JSON — could not parse response.", raw: text.slice(0, 500) })
       }
     }
 
