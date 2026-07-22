@@ -70,10 +70,18 @@ export const authOptions = {
   callbacks: {
     async jwt({ token, account, profile }) {
       if (account) {
-        token.accessToken = account.access_token
-        token.refreshToken = account.refresh_token
-        token.provider = account.provider
-        token.expiresAt = account.expires_at
+        // Store each provider's token under its own key instead of one shared
+        // slot — previously connecting Outlook after Gmail (or vice versa)
+        // overwrote token.accessToken/token.provider, silently disconnecting
+        // whichever was connected first even though both showed as "connected"
+        // briefly. Now both persist side by side.
+        if (!token.providers) token.providers = {}
+        token.providers[account.provider] = {
+          accessToken: account.access_token,
+          refreshToken: account.refresh_token,
+          expiresAt: account.expires_at,
+          email: profile?.email || token.email,
+        }
 
         const userId = profile?.email || token.email
         // Google only issues a refresh_token on first consent — if this fires
@@ -85,8 +93,15 @@ export const authOptions = {
       return token
     },
     async session({ session, token }) {
-      session.accessToken = token.accessToken
-      session.provider = token.provider
+      session.providers = token.providers || {}
+      // Backward-compat: point the old single-slot fields at whichever provider
+      // was connected most recently, so anything not yet migrated doesn't crash.
+      const providerIds = Object.keys(session.providers)
+      const last = providerIds[providerIds.length - 1]
+      if (last) {
+        session.accessToken = session.providers[last].accessToken
+        session.provider = last
+      }
       session.error = token.error
       return session
     },
