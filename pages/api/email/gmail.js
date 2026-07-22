@@ -51,9 +51,44 @@ function extractBody(payload) {
   return ""
 }
 
+// Find the first PDF attachment part in a message payload (walks nested parts)
+function findPdfAttachment(payload) {
+  if (!payload) return null
+  if (payload.mimeType === "application/pdf" && payload.body?.attachmentId) {
+    return { attachmentId: payload.body.attachmentId, filename: payload.filename || "attachment.pdf" }
+  }
+  if (payload.parts?.length) {
+    for (const part of payload.parts) {
+      const found = findPdfAttachment(part)
+      if (found) return found
+    }
+  }
+  return null
+}
+
+// Fetch a Gmail attachment and extract its text (e.g. flight/hotel e-tickets)
+async function extractPdfText(gmail, messageId, attachmentId) {
+  try {
+    const pdfParse = (await import("pdf-parse")).default
+    const att = await gmail.users.messages.attachments.get({
+      userId: "me",
+      messageId,
+      id: attachmentId,
+    })
+    const buffer = Buffer.from(att.data.data, "base64")
+    const parsed = await pdfParse(buffer)
+    // Cap extracted text — tickets/confirmations rarely need more than this to find dates/flight numbers
+    return (parsed.text || "").replace(/\s+/g, " ").trim().slice(0, 1500)
+  } catch (err) {
+    console.error("PDF extract failed:", err.message)
+    return ""
+  }
+}
+
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions)
-  if (!session || session.provider !== "google") {
+  const googleAuth = session?.providers?.google
+  if (!googleAuth) {
     return res.status(401).json({ error: "Not authenticated with Google" })
   }
 
@@ -62,7 +97,7 @@ export default async function handler(req, res) {
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET
     )
-    oauth2Client.setCredentials({ access_token: session.accessToken })
+    oauth2Client.setCredentials({ access_token: googleAuth.accessToken })
 
     const gmail = google.gmail({ version: "v1", auth: oauth2Client })
 
@@ -90,6 +125,12 @@ export default async function handler(req, res) {
     const MAX_FULL_FETCH = 40
     const toFetch = messages.slice(0, MAX_FULL_FETCH)
 
+    // Cap total PDF attachment fetches per request — extracting text from a PDF
+    // (download + parse) is much slower than reading email body, so this protects
+    // the 30s serverless timeout when many emails have attachments at once.
+    const MAX_PDF_FETCHES = 15
+    let pdfFetchCount = 0
+
     async function fetchOne(msg) {
       const detail = await gmail.users.messages.get({
         userId: "me",
@@ -103,7 +144,19 @@ export default async function handler(req, res) {
       const fullBody = extractBody(detail.data.payload)
       // Cap at ~3000 chars to keep AI prompt cost/latency reasonable —
       // still ~20x more context than the old 150-char preview.
-      const body = fullBody.slice(0, 3000)
+      let body = fullBody.slice(0, 3000)
+
+      // If there's a PDF attachment (e-tickets, hotel confirmations, invoices often
+      // put the real dates/details in the PDF, not the email body), extract its text
+      // and append it so the AI triage/calendar prompt actually sees it.
+      const pdfAttachment = findPdfAttachment(detail.data.payload)
+      if (pdfAttachment && pdfFetchCount < MAX_PDF_FETCHES) {
+        pdfFetchCount++
+        const pdfText = await extractPdfText(gmail, msg.id, pdfAttachment.attachmentId)
+        if (pdfText) {
+          body += `\n\n[Attachment: ${pdfAttachment.filename}]\n${pdfText}`
+        }
+      }
 
       return {
         id: msg.id,
@@ -112,6 +165,7 @@ export default async function handler(req, res) {
         date: get("Date"),
         snippet: detail.data.snippet || "", // short preview, still used for UI cards
         body,                                // full(er) content, used for AI triage/parsing
+        hasPdf: !!pdfAttachment,
         source: "gmail",
       }
     }
