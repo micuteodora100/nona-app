@@ -4,6 +4,21 @@ import { authOptions } from "../auth/[...nextauth]"
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
+function parseAIJson(text) {
+  let cleaned = text.trim()
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim()
+  try {
+    return JSON.parse(cleaned)
+  } catch {
+    const start = cleaned.indexOf("{")
+    const end = cleaned.lastIndexOf("}")
+    if (start !== -1 && end !== -1 && end > start) {
+      return JSON.parse(cleaned.slice(start, end + 1))
+    }
+    throw new Error("Could not extract JSON")
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end()
 
@@ -174,7 +189,7 @@ Maximum 5 bullets. If there's truly nothing pressing, say so in one line. Do not
 
     if (type === "triage" || type === "parse_tasks" || type === "email_to_task") {
       try {
-        const parsed = JSON.parse(text)
+        const parsed = parseAIJson(text)
         return res.json(parsed)
       } catch {
         return res.status(500).json({ error: "AI returned invalid JSON — could not parse response.", raw: text.slice(0, 500) })
