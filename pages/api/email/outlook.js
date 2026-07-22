@@ -11,6 +11,31 @@ function stripHtml(html) {
     .trim()
 }
 
+// Fetch PDF attachments for a message via Microsoft Graph and extract their text
+// (e.g. Luxair/airline e-tickets, hotel confirmations often bury dates in the PDF, not the body)
+async function extractPdfTextFromMessage(messageId, accessToken) {
+  try {
+    const res = await fetch(
+      `https://graph.microsoft.com/v1.0/me/messages/${messageId}/attachments`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    )
+    if (!res.ok) return ""
+    const data = await res.json()
+    const pdfAttachment = (data.value || []).find(
+      (a) => a.contentType === "application/pdf" && a.contentBytes
+    )
+    if (!pdfAttachment) return ""
+
+    const pdfParse = (await import("pdf-parse")).default
+    const buffer = Buffer.from(pdfAttachment.contentBytes, "base64")
+    const parsed = await pdfParse(buffer)
+    return (parsed.text || "").replace(/\s+/g, " ").trim().slice(0, 1500)
+  } catch (err) {
+    console.error("Outlook PDF extract failed:", err.message)
+    return ""
+  }
+}
+
 // Microsoft Graph API — proper OAuth, replaces broken IMAP approach
 // Reads emails from user's Outlook inbox using their access token
 export default async function handler(req, res) {
@@ -30,8 +55,10 @@ export default async function handler(req, res) {
       `https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages` +
       `?$filter=receivedDateTime ge ${sinceISO}` +
       `&$top=100` +
-      // was: bodyPreview only (~255 chars) — now also request full "body"
-      `&$select=id,subject,from,receivedDateTime,bodyPreview,body,isRead` +
+      // was: bodyPreview only (~255 chars) — now also request full "body",
+      // plus hasAttachments so we know which messages are worth an extra
+      // attachments lookup (most emails have none — no need to call for those)
+      `&$select=id,subject,from,receivedDateTime,bodyPreview,body,isRead,hasAttachments` +
       `&$orderby=receivedDateTime desc`,
       {
         headers: {
@@ -47,23 +74,42 @@ export default async function handler(req, res) {
     }
 
     const data = await response.json()
-    const emails = (data.value || []).map(msg => {
-      const raw = msg.body?.content || ""
-      const plain = msg.body?.contentType === "html" ? stripHtml(raw) : raw
-      // Cap at ~3000 chars to keep AI prompt cost/latency reasonable
-      const body = plain.slice(0, 3000)
+    const rawMessages = data.value || []
 
-      return {
-        id: msg.id,
-        from: `${msg.from?.emailAddress?.name || ""} <${msg.from?.emailAddress?.address || ""}>`,
-        subject: msg.subject || "(no subject)",
-        date: msg.receivedDateTime,
-        snippet: msg.bodyPreview || "", // short preview, still used for UI cards
-        body,                            // full(er) content, used for AI triage/parsing
-        isRead: msg.isRead,
-        source: "outlook",
-      }
-    })
+    // Cap total PDF attachment fetches per request — each one is an extra Graph
+    // API call plus PDF parse, so this protects the 30s serverless timeout.
+    const MAX_PDF_FETCHES = 15
+    let pdfFetchCount = 0
+
+    const emails = await Promise.all(
+      rawMessages.map(async (msg) => {
+        const raw = msg.body?.content || ""
+        const plain = msg.body?.contentType === "html" ? stripHtml(raw) : raw
+        let body = plain.slice(0, 3000)
+
+        let hasPdf = false
+        if (msg.hasAttachments && pdfFetchCount < MAX_PDF_FETCHES) {
+          pdfFetchCount++
+          const pdfText = await extractPdfTextFromMessage(msg.id, session.accessToken)
+          if (pdfText) {
+            hasPdf = true
+            body += `\n\n[Attachment]\n${pdfText}`
+          }
+        }
+
+        return {
+          id: msg.id,
+          from: `${msg.from?.emailAddress?.name || ""} <${msg.from?.emailAddress?.address || ""}>`,
+          subject: msg.subject || "(no subject)",
+          date: msg.receivedDateTime,
+          snippet: msg.bodyPreview || "", // short preview, still used for UI cards
+          body,                            // full(er) content, used for AI triage/parsing
+          isRead: msg.isRead,
+          hasPdf,
+          source: "outlook",
+        }
+      })
+    )
 
     res.json({ emails, source: "outlook" })
   } catch (err) {
