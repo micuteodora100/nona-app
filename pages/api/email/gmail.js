@@ -80,35 +80,62 @@ export default async function handler(req, res) {
     }
 
     // Fetch each message's full content (was: format "metadata" — 150-char snippet only)
-    const emails = await Promise.all(
-      messages.slice(0, 100).map(async (msg) => {
-        const detail = await gmail.users.messages.get({
-          userId: "me",
-          id: msg.id,
-          format: "full",
-        })
+    // IMPORTANT: never fetch all messages in one unbounded Promise.all — with up to 100
+    // messages that reliably trips Gmail API rate limits and/or Vercel's serverless
+    // timeout, and a single failed message used to take the whole request down with it
+    // (Promise.all rejects entirely on one rejection). Batch in groups of 10, cap total
+    // full-body fetches at 40 (most recent first — already sorted by Gmail), and use
+    // allSettled so one bad message never blocks the rest.
+    const BATCH_SIZE = 10
+    const MAX_FULL_FETCH = 40
+    const toFetch = messages.slice(0, MAX_FULL_FETCH)
 
-        const headers = detail.data.payload.headers
-        const get = (name) => headers.find((h) => h.name === name)?.value || ""
+    async function fetchOne(msg) {
+      const detail = await gmail.users.messages.get({
+        userId: "me",
+        id: msg.id,
+        format: "full",
+      })
 
-        const fullBody = extractBody(detail.data.payload)
-        // Cap at ~3000 chars to keep AI prompt cost/latency reasonable —
-        // still ~20x more context than the old 150-char preview.
-        const body = fullBody.slice(0, 3000)
+      const headers = detail.data.payload.headers
+      const get = (name) => headers.find((h) => h.name === name)?.value || ""
 
-        return {
-          id: msg.id,
-          from: get("From"),
-          subject: get("Subject"),
-          date: get("Date"),
-          snippet: detail.data.snippet || "", // short preview, still used for UI cards
-          body,                                // full(er) content, used for AI triage/parsing
-          source: "gmail",
+      const fullBody = extractBody(detail.data.payload)
+      // Cap at ~3000 chars to keep AI prompt cost/latency reasonable —
+      // still ~20x more context than the old 150-char preview.
+      const body = fullBody.slice(0, 3000)
+
+      return {
+        id: msg.id,
+        from: get("From"),
+        subject: get("Subject"),
+        date: get("Date"),
+        snippet: detail.data.snippet || "", // short preview, still used for UI cards
+        body,                                // full(er) content, used for AI triage/parsing
+        source: "gmail",
+      }
+    }
+
+    const emails = []
+    const failedIds = []
+    for (let i = 0; i < toFetch.length; i += BATCH_SIZE) {
+      const batch = toFetch.slice(i, i + BATCH_SIZE)
+      const results = await Promise.allSettled(batch.map(fetchOne))
+      results.forEach((r, idx) => {
+        if (r.status === "fulfilled") {
+          emails.push(r.value)
+        } else {
+          failedIds.push(batch[idx].id)
+          console.error("Gmail message fetch failed:", batch[idx].id, r.reason?.message)
         }
       })
-    )
+    }
 
-    res.json({ emails, source: "gmail" })
+    if (failedIds.length > 0) {
+      console.warn(`Gmail: ${failedIds.length}/${toFetch.length} messages failed to fetch, continuing with the rest`)
+    }
+
+    res.json({ emails, source: "gmail", skipped: messages.length - toFetch.length, failed: failedIds.length })
   } catch (err) {
     console.error("Gmail error:", err.message)
     res.status(500).json({ error: err.message })
