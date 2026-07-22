@@ -270,7 +270,7 @@ export default function Nona() {
       const allEmails = []
       const fetchErrors = []
       // Gmail via OAuth
-      if (session?.provider === "google") {
+      if (session?.providers?.google) {
         const r = await fetch("/api/email/gmail")
         if (r.ok) {
           const d = await r.json()
@@ -282,7 +282,7 @@ export default function Nona() {
         }
       }
       // Outlook via Microsoft Graph OAuth (proper OAuth, replaces IMAP)
-      if (session?.provider === "microsoft") {
+      if (session?.providers?.microsoft) {
         const ro = await fetch("/api/email/outlook")
         if (ro.ok) {
           const d = await ro.json()
@@ -1399,13 +1399,13 @@ export default function Nona() {
               </div>
 
               <div style={{ fontSize: 10, color: "var(--gold)", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, marginBottom: 8, padding: "0 4px" }}>Email</div>
-              {session?.provider === "google" ? (
+              {session?.providers?.google ? (
                 <div className="settings-row">
                   <div>
-                    <div style={{ fontSize: 14 }}>Gmail connected</div>
-                    <div style={{ fontSize: 12, color: "var(--muted)" }}>{session.user?.email}</div>
+                    <div style={{ fontSize: 14 }}>Gmail connected ✓</div>
+                    <div style={{ fontSize: 12, color: "var(--muted)" }}>{session.providers.google.email}</div>
                   </div>
-                  <button className="btn-sm" onClick={() => signOut()}>Disconnect</button>
+                  <button className="btn-sm" onClick={() => signOut()}>Disconnect all</button>
                 </div>
               ) : (
                 <div className="settings-row">
@@ -1414,13 +1414,13 @@ export default function Nona() {
                 </div>
               )}
 
-              {session?.provider === "microsoft" ? (
+              {session?.providers?.microsoft ? (
                 <div className="settings-row">
                   <div>
                     <div style={{ fontSize: 14 }}>Outlook connected ✓</div>
-                    <div style={{ fontSize: 12, color: "var(--muted)" }}>{session.user?.email}</div>
+                    <div style={{ fontSize: 12, color: "var(--muted)" }}>{session.providers.microsoft.email}</div>
                   </div>
-                  <button className="btn-sm" onClick={() => signOut()}>Disconnect</button>
+                  <button className="btn-sm" onClick={() => signOut()}>Disconnect all</button>
                 </div>
               ) : (
                 <div className="settings-row">
