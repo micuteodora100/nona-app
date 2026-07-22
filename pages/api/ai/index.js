@@ -37,7 +37,7 @@ export default async function handler(req, res) {
       // chars still gives far more context than the original 150-char
       // snippet while keeping the whole call fast enough to finish in time.
       const emailList = emails
-        .map((e, i) => `[${i + 1}] From: ${e.from}\nSubject: ${e.subject}\nContent: ${(e.body || e.snippet || "").slice(0, 400)}`)
+        .map((e, i) => `[${i + 1}] From: ${e.from}\nSubject: ${e.subject}\nContent: ${(e.body || e.snippet || "").slice(0, 1000)}`)
         .join("\n\n")
 
       const todayStr = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })
