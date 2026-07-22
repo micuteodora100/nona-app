@@ -18,5 +18,6 @@
     "mailparser": "^3.7.1",
     "@supabase/supabase-js": "^2.45.0",
     "web-push": "^3.6.7"
+    "pdf-parse": "^1.1.1"
   }
 }
