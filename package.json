@@ -8,16 +8,17 @@
     "start": "next start"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.24.3",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "@supabase/ssr": "^0.12.3",
+    "@supabase/supabase-js": "^2.45.0",
+    "googleapis": "^140.0.1",
+    "imap": "^0.8.19",
+    "isomorphic-fetch": "^3.0.0",
+    "mailparser": "^3.7.1",
     "next": "14.2.5",
     "next-auth": "^4.24.7",
-    "@anthropic-ai/sdk": "^0.24.3",
-    "googleapis": "^140.0.1",
-    "@microsoft/microsoft-graph-client": "^3.0.7",
-    "isomorphic-fetch": "^3.0.0",
-    "imap": "^0.8.19",
-    "mailparser": "^3.7.1",
-    "@supabase/supabase-js": "^2.45.0",
-    "web-push": "^3.6.7",
-    "pdf-parse": "^1.1.1"
+    "pdf-parse": "^1.1.1",
+    "web-push": "^3.6.7"
   }
 }

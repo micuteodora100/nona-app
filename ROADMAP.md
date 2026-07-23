@@ -1,6 +1,6 @@
 # Nona — Product Roadmap
 
-Last updated: July 2026
+Last updated: 23 July 2026
 
 T-shirt sizes: XS = half day | S = 1-2 days | M = 3-5 days | L = 1-2 weeks | XL = 3-4 weeks
 Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
@@ -33,6 +33,17 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 | ✅ HTTPS enforced | Vercel handles this |
 | ✅ API keys server-side only | Never exposed to browser |
 | ✅ Email data never stored | Processed in memory per request only |
+| ✅ Gmail + Outlook connect simultaneously | Fixed 23 Jul 2026 — connecting one always silently disconnected the other. Root cause: NextAuth's JWT strategy rebuilds the session token from scratch on every fresh OAuth sign-in (`node_modules/next-auth/core/routes/callback.js`) and never carries forward whatever was already connected — not a cookie-size issue as first suspected. Fixed by manually decoding the existing session via `getToken()` and merging it before adding the new provider (`pages/api/auth/[...nextauth].js`). Access/refresh tokens also moved out of the session cookie into Supabase (`lib/tokens.js`) so the cookie stays small regardless. |
+| ✅ Supabase email/password login actually works | Fixed 23 Jul 2026 — the login page appeared to silently do nothing after signing in. Cause: the Supabase client stored the session in localStorage, which the Edge middleware (cookie-only) could never see, so every request bounced back to `/login`. Switched to `@supabase/ssr`'s cookie-based client (`lib/supabase.js`, `middleware.js`). |
+| ✅ Password visibility toggle | Show/Hide button on both the login page and the legacy password gate |
+| ✅ Mail tab shows connected accounts | Small status pills at the top of Mail — see at a glance which of Gmail/Outlook are connected, so a failed connection is obvious without going to Settings |
+| ✅ Disconnect one email account without losing the other | Fixed 23 Jul 2026 — "Disconnect all" was the only option, and it did exactly that even when clicked from just the Gmail or just the Outlook row. Each provider now has its own Disconnect; an explicit "Disconnect all" sits above both if you want to sign out of everything at once. |
+| ✅ Email → Calendar auto-detection | Already shipped, just not marked here — triage extracts `calendar_events` from dated emails (bookings, flights, appointments) and auto-adds them to the week view |
+| ✅ Global email filter rules | Already shipped — Settings → Email filter rules, permanent sender/subject blocklist applied before triage |
+| ✅ Voice: stop recording button | Already shipped — explicit red stop control while the mic is active |
+| ✅ Voice: live transcript editing | Already shipped — transcript is editable before it's parsed into tasks |
+| ✅ Tasks: date in front | Already shipped — date badge renders before the task text, not after |
+| ✅ Full email body reading | Already shipped — up to 3000 chars of real body (plus PDF attachment text) per email, not just a 100-150 char preview |
 
 ---
 
@@ -48,19 +59,16 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 
 | Size | Feature | Notes |
 |------|---------|-------|
-| M | **Email → Calendar auto-detection** | Triage detects dates/meetings/bookings in emails and auto-creates calendar events. "Lunch tomorrow at La Lorraine" → appears in week view with link to original email. No manual action needed. |
-| S | **Global email filter rules** | User defines permanent rules once: "never show password change emails", "never show emails from Microsoft account team." Applied before triage — whole sender/subject pattern blocked forever. Stored in profile. |
-| S | **Voice: stop recording button** | Explicit red stop button while mic is active. Currently stops only when you stop speaking — needs manual control. |
-| S | **Voice: live transcript editing** | Show transcript as you speak. Allow tapping to correct words before AI parses into tasks. |
-| S | **Tasks: date in front** | Move date badge to front of each task (left side) not end. Clearer visual hierarchy — date first, then text. |
-| S | **Tasks: add to calendar button** | Calendar icon on any task with a date. Tap → task appears in week view. |
-| M | **Full email body reading** | Currently only 100-150 char previews — dates and booking details missed. Needed for calendar auto-detection to work well. |
 | S | **AI context survey on first open** | 5 questions + scan 90 days emails → build personal context profile. Makes brief and triage more personalised. |
-| XL | **Supabase auth — proper login** | Email + password per user. Replaces shared APP_PASSWORD. Required before sharing with others. Moving to P0 — building now. |
+| M | **Task list needs real categorisation** | Right now everything an email turns into a task lands in one flat list — bills, groceries, job applications, and one-off personal emails all mixed together with no way to tell them apart at a glance. Needs a smarter default grouping (e.g. by source/type — "Bills & money", "Groceries/errands", "Applications", "Personal") instead of relying on the generic family/work/health/errands tags, which don't map well to the actual mix of things landing here from email triage. |
+| L | **Multi-user readiness — not there yet** | Raised 23 Jul 2026: can other people use this now? Short answer: not safely yet, even though today's fixes made the mechanics *work*. Gaps: (1) `nona_user_data`/task sync is keyed off whichever OAuth email NextAuth considers "current," not off the Supabase Auth identity someone actually logged in with — a new person who signs into the app but hasn't yet connected Gmail/Outlook has no working sync at all; (2) the RLS policy on `nona_user_data` (`user_id LIKE '%@%'`) would let any authenticated Supabase user read/write any other user's row if ever queried directly with the publishable key — currently harmless only because the app always proxies through the server route with the service-role key, but it's a latent hole, not a real boundary; (3) `ANTHROPIC_API_KEY` is one shared key — every user's AI usage bills against the same Anthropic account. Fine for you + one trusted person who understands this; not ready to open up beyond that. |
+| XL | **Supabase auth — proper login** | Email + password per user, replacing the shared `APP_PASSWORD`. The login page and cookie-based session now actually work end-to-end (fixed 23 Jul 2026), but see "Multi-user readiness" above — the identity model underneath still isn't unified enough to call this fully done. |
 
 ---
 
 ## 🔵 P2 — Next quarter
+
+Audited 23 Jul 2026 — everything below is confirmed genuinely not built except the push notification row. Two natural groupings for future batching: the four **budget** rows (BIL/Revolut connections → Amazon/Lidl spend parsing → unified dashboard) form one sequence since each depends on the one before it; the two **grocery** rows (weekly offers + price comparison) form another and both just feed the still-placeholder Groceries tab.
 
 | Size | Feature | Notes |
 |------|---------|-------|
@@ -68,7 +76,7 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 | S | **Google Calendar integration** | Show real Google Calendar appointments in week view alongside tasks |
 | M | **Document expiry reminders** | Passport, driving licence, residence permit, contrôle technique. One-time setup, reminds 6 weeks before. |
 | S | **Crèche/school email parsing** | Detect crèche/school emails, extract dates/requirements/payments into tasks |
-| M | **Morning brief push notification at 7am** | PWA service worker or native app required |
+| M | **Morning brief push notification at 7am** | Partially built: subscribe/unsubscribe + service worker (`lib/push-client.js`, `public/sw.js`, `pages/api/push/subscribe.js`) and encrypted-token storage for cron access (`lib/tokens.js`, `oauth_tokens` table) all already exist. What's still missing: the actual scheduled trigger — no Vercel Cron config or `/api/cron/*` route exists yet to fire at 7am, generate the brief, and call the push send. |
 | L | **BIL connection** | PSD2 via Nordigen/GoCardless. Read-only. |
 | L | **Revolut connection** | Same PSD2 approach. Transactions, balance, categories. |
 | M | **Amazon spend tracking** | Parse Amazon order confirmation emails — item, price, delivery date. No API needed. |

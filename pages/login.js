@@ -8,6 +8,7 @@ export default function Login() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [mode, setMode] = useState("login") // login | signup | magic
+  const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
   const [loading, setLoading] = useState(false)
@@ -53,7 +54,7 @@ export default function Login() {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Syne:wght@400;500;600&display=swap" rel="stylesheet" />
       </Head>
-      <style>{`
+      <style jsx global>{`
         * { box-sizing: border-box; margin: 0; padding: 0; }
         html, body { height: 100%; background: #0D0C0A; font-family: 'Syne', sans-serif; }
         .wrap { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px; }
@@ -62,6 +63,10 @@ export default function Login() {
         form { width: 100%; max-width: 320px; display: flex; flex-direction: column; gap: 12px; }
         input { background: rgba(255,255,255,0.04); border: 1px solid rgba(232,200,122,0.12); border-radius: 12px; color: #F5F0E8; font-size: 15px; padding: 14px 16px; outline: none; font-family: 'Syne', sans-serif; width: 100%; }
         input:focus { border-color: rgba(232,200,122,0.4); }
+        .password-field { position: relative; }
+        .password-field input { padding-right: 56px; }
+        .password-toggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: none; border: none; color: rgba(245,240,232,0.5); font-size: 12px; cursor: pointer; padding: 8px 10px; font-family: 'Syne', sans-serif; }
+        .password-toggle:hover { color: #E8C87A; }
         .btn-gold { background: #E8C87A; color: #0D0C0A; border: none; border-radius: 12px; font-size: 15px; font-weight: 600; padding: 14px; cursor: pointer; font-family: 'Syne', sans-serif; width: 100%; }
         .btn-ghost { background: transparent; border: 1px solid rgba(232,200,122,0.12); border-radius: 12px; color: rgba(245,240,232,0.5); font-size: 13px; padding: 11px; cursor: pointer; font-family: 'Syne', sans-serif; width: 100%; }
         .err { color: #e87a7a; font-size: 13px; text-align: center; }
@@ -77,7 +82,12 @@ export default function Login() {
         <form onSubmit={handleLogin}>
           <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" required />
           {mode !== "magic" && (
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" required={mode !== "magic"} />
+            <div className="password-field">
+              <input type={showPassword ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" required={mode !== "magic"} />
+              <button type="button" className="password-toggle" onClick={() => setShowPassword(s => !s)}>
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </div>
           )}
           {error && <div className="err">{error}</div>}
           {message && <div className="msg">{message}</div>}

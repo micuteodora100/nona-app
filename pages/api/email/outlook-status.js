@@ -1,17 +1,24 @@
 import { getServerSession } from "next-auth"
-import { authOptions } from "../auth/[...nextauth]"
+import { getAuthOptions } from "../auth/[...nextauth]"
+import { getAccessToken } from "../../../lib/tokens"
 
-// Test Microsoft Graph connection using current session token
+// Test Microsoft Graph connection using the stored access token
 export default async function handler(req, res) {
-  const session = await getServerSession(req, res, authOptions)
+  const session = await getServerSession(req, res, getAuthOptions(req))
+  const microsoftAuth = session?.providers?.microsoft
 
-  if (!session || session.provider !== "microsoft") {
+  if (!microsoftAuth) {
     return res.json({ ok: false, error: "Not connected with Microsoft account" })
   }
 
   try {
+    const accessToken = await getAccessToken(microsoftAuth.email, "microsoft")
+    if (!accessToken) {
+      return res.json({ ok: false, error: "Microsoft connection expired — reconnect Outlook in Settings" })
+    }
+
     const response = await fetch("https://graph.microsoft.com/v1.0/me", {
-      headers: { Authorization: `Bearer ${session.accessToken}` },
+      headers: { Authorization: `Bearer ${accessToken}` },
     })
 
     if (!response.ok) {

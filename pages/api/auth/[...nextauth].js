@@ -1,7 +1,7 @@
 import NextAuth from "next-auth"
+import { getToken } from "next-auth/jwt"
 import GoogleProvider from "next-auth/providers/google"
-import { createClient } from "@supabase/supabase-js"
-import { encrypt } from "../../../lib/crypto"
+import { persistProviderTokens } from "../../../lib/tokens"
 
 // Microsoft personal accounts via OAuth 2.0 + Microsoft Graph API
 // Uses /consumers endpoint for personal @outlook.com/@hotmail.com accounts
@@ -24,92 +24,79 @@ const MicrosoftPersonalProvider = {
   clientSecret: process.env.MICROSOFT_CLIENT_SECRET,
 }
 
-function getSupabaseServer() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-  if (!url || !key) return null
-  return createClient(url, key)
-}
+// authOptions has to be a function of `req` (not a static object) because the
+// jwt() callback below needs it — see the comment inside jwt() for why.
+export function getAuthOptions(req) {
+  return {
+    providers: [
+      GoogleProvider({
+        clientId: process.env.GOOGLE_CLIENT_ID,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+        authorization: {
+          params: {
+            scope: "openid email profile https://www.googleapis.com/auth/gmail.readonly",
+            access_type: "offline",
+            prompt: "consent",
+          },
+        },
+      }),
+      MicrosoftPersonalProvider,
+    ],
+    callbacks: {
+      async jwt({ token, account, profile }) {
+        if (account) {
+          // NextAuth's own OAuth callback route (node_modules/next-auth/core/routes/callback.js)
+          // always builds `token` from scratch as {name, email, picture, sub}
+          // for every fresh sign-in — it never decodes the browser's existing
+          // session cookie first. That means token.providers started empty
+          // on every single sign-in, so connecting a second provider always
+          // wiped out whatever was connected before — 100% of the time, not
+          // an occasional glitch. We have to manually decode the incoming
+          // request's current session cookie here and seed token.providers
+          // from it before adding the provider that just finished signing in.
+          try {
+            const existing = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+            if (existing?.providers) token.providers = { ...existing.providers }
+          } catch (err) {
+            console.error("Failed to read existing session for provider merge:", err.message)
+          }
 
-// Saves the refresh token (encrypted) so the 7am cron job can fetch email
-// without an active browser session. Silently no-ops if not configured yet,
-// so this never blocks a normal sign-in.
-async function persistRefreshToken(userId, provider, refreshToken) {
-  if (!refreshToken || !userId) return
-  try {
-    const supabase = getSupabaseServer()
-    if (!supabase) return
-    const encrypted = encrypt(refreshToken)
-    await supabase
-      .from("oauth_tokens")
-      .upsert(
-        { user_id: userId, provider, encrypted_refresh_token: encrypted, updated_at: new Date().toISOString() },
-        { onConflict: "user_id,provider" }
-      )
-  } catch (err) {
-    // Never break sign-in over token persistence — log and move on
-    console.error("persistRefreshToken failed:", err.message)
+          if (!token.providers) token.providers = {}
+          const providerEmail = profile?.email || token.email
+          token.providers[account.provider] = {
+            connected: true,
+            email: providerEmail,
+          }
+
+          try {
+            await persistProviderTokens(providerEmail, account.provider, {
+              accessToken: account.access_token,
+              refreshToken: account.refresh_token,
+              expiresAt: account.expires_at,
+            })
+          } catch (err) {
+            // Never break sign-in over token persistence — log and move on
+            console.error("persistProviderTokens failed:", err.message)
+          }
+        }
+        return token
+      },
+      async session({ session, token }) {
+        session.providers = token.providers || {}
+        const providerIds = Object.keys(session.providers)
+        const last = providerIds[providerIds.length - 1]
+        if (last) session.provider = last
+        session.error = token.error
+        return session
+      },
+    },
+    pages: {
+      signIn: "/",
+    },
+    secret: process.env.NEXTAUTH_SECRET,
   }
 }
 
-export const authOptions = {
-  providers: [
-    GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      authorization: {
-        params: {
-          scope: "openid email profile https://www.googleapis.com/auth/gmail.readonly",
-          access_type: "offline",
-          prompt: "consent",
-        },
-      },
-    }),
-    MicrosoftPersonalProvider,
-  ],
-  callbacks: {
-    async jwt({ token, account, profile }) {
-      if (account) {
-        // Store each provider's token under its own key instead of one shared
-        // slot — previously connecting Outlook after Gmail (or vice versa)
-        // overwrote token.accessToken/token.provider, silently disconnecting
-        // whichever was connected first even though both showed as "connected"
-        // briefly. Now both persist side by side.
-        if (!token.providers) token.providers = {}
-        token.providers[account.provider] = {
-          accessToken: account.access_token,
-          refreshToken: account.refresh_token,
-          expiresAt: account.expires_at,
-          email: profile?.email || token.email,
-        }
-
-        const userId = profile?.email || token.email
-        // Google only issues a refresh_token on first consent — if this fires
-        // again without one, the previously stored token is still valid.
-        if (account.refresh_token) {
-          await persistRefreshToken(userId, account.provider, account.refresh_token)
-        }
-      }
-      return token
-    },
-    async session({ session, token }) {
-      session.providers = token.providers || {}
-      // Backward-compat: point the old single-slot fields at whichever provider
-      // was connected most recently, so anything not yet migrated doesn't crash.
-      const providerIds = Object.keys(session.providers)
-      const last = providerIds[providerIds.length - 1]
-      if (last) {
-        session.accessToken = session.providers[last].accessToken
-        session.provider = last
-      }
-      session.error = token.error
-      return session
-    },
-  },
-  pages: {
-    signIn: "/",
-  },
-  secret: process.env.NEXTAUTH_SECRET,
+export default async function auth(req, res) {
+  return NextAuth(req, res, getAuthOptions(req))
 }
-
-export default NextAuth(authOptions)

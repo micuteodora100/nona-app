@@ -1,5 +1,6 @@
 import { getServerSession } from "next-auth"
-import { authOptions } from "../auth/[...nextauth]"
+import { getAuthOptions } from "../auth/[...nextauth]"
+import { getAccessToken } from "../../../lib/tokens"
 
 function stripHtml(html) {
   return (html || "")
@@ -39,7 +40,7 @@ async function extractPdfTextFromMessage(messageId, accessToken) {
 // Microsoft Graph API — proper OAuth, replaces broken IMAP approach
 // Reads emails from user's Outlook inbox using their access token
 export default async function handler(req, res) {
-  const session = await getServerSession(req, res, authOptions)
+  const session = await getServerSession(req, res, getAuthOptions(req))
 
   const microsoftAuth = session?.providers?.microsoft
   if (!microsoftAuth) {
@@ -47,6 +48,11 @@ export default async function handler(req, res) {
   }
 
   try {
+    const accessToken = await getAccessToken(microsoftAuth.email, "microsoft")
+    if (!accessToken) {
+      return res.status(401).json({ error: "Microsoft connection expired — reconnect Outlook in Settings" })
+    }
+
     // Fetch unread emails from last 90 days using Microsoft Graph
     const since = new Date()
     since.setDate(since.getDate() - 90)
@@ -63,7 +69,7 @@ export default async function handler(req, res) {
       `&$orderby=receivedDateTime desc`,
       {
         headers: {
-          Authorization: `Bearer ${microsoftAuth.accessToken}`,
+          Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
       }
@@ -91,7 +97,7 @@ export default async function handler(req, res) {
         let hasPdf = false
         if (msg.hasAttachments && pdfFetchCount < MAX_PDF_FETCHES) {
           pdfFetchCount++
-          const pdfText = await extractPdfTextFromMessage(msg.id, microsoftAuth.accessToken)
+          const pdfText = await extractPdfTextFromMessage(msg.id, accessToken)
           if (pdfText) {
             hasPdf = true
             body += `\n\n[Attachment]\n${pdfText}`

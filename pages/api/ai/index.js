@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk"
 import { getServerSession } from "next-auth"
-import { authOptions } from "../auth/[...nextauth]"
+import { getAuthOptions } from "../auth/[...nextauth]"
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -22,7 +22,7 @@ function parseAIJson(text) {
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end()
 
-  const session = await getServerSession(req, res, authOptions)
+  const session = await getServerSession(req, res, getAuthOptions(req))
   if (!session) return res.status(401).json({ error: "Not authenticated" })
 
   const { type, emails, tasks, context } = req.body

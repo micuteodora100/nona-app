@@ -1,5 +1,6 @@
 import { getServerSession } from "next-auth"
-import { authOptions } from "../auth/[...nextauth]"
+import { getAuthOptions } from "../auth/[...nextauth]"
+import { getAccessToken } from "../../../lib/tokens"
 import { google } from "googleapis"
 
 // Decode Gmail's base64url body parts into plain text, walking nested MIME parts
@@ -86,18 +87,23 @@ async function extractPdfText(gmail, messageId, attachmentId) {
 }
 
 export default async function handler(req, res) {
-  const session = await getServerSession(req, res, authOptions)
+  const session = await getServerSession(req, res, getAuthOptions(req))
   const googleAuth = session?.providers?.google
   if (!googleAuth) {
     return res.status(401).json({ error: "Not authenticated with Google" })
   }
 
   try {
+    const accessToken = await getAccessToken(googleAuth.email, "google")
+    if (!accessToken) {
+      return res.status(401).json({ error: "Google connection expired — reconnect Gmail in Settings" })
+    }
+
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET
     )
-    oauth2Client.setCredentials({ access_token: googleAuth.accessToken })
+    oauth2Client.setCredentials({ access_token: accessToken })
 
     const gmail = google.gmail({ version: "v1", auth: oauth2Client })
 

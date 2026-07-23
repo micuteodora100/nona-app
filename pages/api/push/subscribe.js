@@ -1,16 +1,9 @@
-import { createClient } from "@supabase/supabase-js"
 import { getServerSession } from "next-auth"
-import { authOptions } from "../auth/[...nextauth]"
-
-function getSupabaseServer() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-  if (!url || !key) return null
-  return createClient(url, key)
-}
+import { getAuthOptions } from "../auth/[...nextauth]"
+import { getSupabaseServer } from "../../../lib/supabase-server"
 
 export default async function handler(req, res) {
-  const session = await getServerSession(req, res, authOptions)
+  const session = await getServerSession(req, res, getAuthOptions(req))
   if (!session) return res.status(401).json({ error: "Not authenticated" })
 
   const userId = session.user?.email

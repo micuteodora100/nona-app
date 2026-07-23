@@ -19,7 +19,9 @@ GRANT ALL ON push_subscriptions TO authenticated;
 CREATE TABLE IF NOT EXISTS oauth_tokens (
   user_id TEXT NOT NULL,
   provider TEXT NOT NULL,                 -- 'google' or 'microsoft'
-  encrypted_refresh_token TEXT NOT NULL,  -- encrypted with ENCRYPTION_KEY, see lib/crypto.js
+  encrypted_refresh_token TEXT,           -- encrypted with ENCRYPTION_KEY, see lib/crypto.js
+  encrypted_access_token TEXT,            -- cached access token, refreshed on expiry (lib/tokens.js)
+  expires_at TIMESTAMPTZ,                 -- when encrypted_access_token expires
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   PRIMARY KEY (user_id, provider)
 );

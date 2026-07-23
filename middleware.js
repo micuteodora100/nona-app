@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { createServerClient } from "@supabase/ssr"
 
 // Edge-compatible HMAC using Web Crypto API
 async function verifyAppPassword(token, secret) {
@@ -40,24 +41,37 @@ export async function middleware(req) {
     return NextResponse.next()
   }
 
-  // Check Supabase session cookie (new proper auth)
-  // Supabase stores session in a "sb-{project-ref}-auth-token" cookie.
-  // FIX: when the JWT is large (e.g. carrying both Google + Microsoft Graph
-  // tokens), Supabase's browser client CHUNKS it into
-  // "sb-{ref}-auth-token.0", ".1", etc. The old endsWith("-auth-token")
-  // check missed these chunked cookies entirely, silently treating a
-  // logged-in user as logged-out. Using includes() catches both the
-  // single-cookie and chunked cases.
-  const supabaseCookies = [...req.cookies.getAll()].filter(
-    (c) => c.name.startsWith("sb-") && c.name.includes("-auth-token")
-  )
-  if (supabaseCookies.length > 0) {
-    return NextResponse.next()
+  // Check Supabase session (new proper auth)
+  // The old version just checked for the presence of a "sb-*-auth-token"
+  // cookie by name — but createBrowserClient (lib/supabase.js) stores the
+  // session as an HttpOnly-less cookie whose value alone doesn't prove it's
+  // still valid (expired/tampered cookies have the same name). Using
+  // createServerClient + auth.getUser() actually validates the session
+  // against Supabase and transparently refreshes it when it's close to
+  // expiring, rewriting the response cookies via setAll below.
+  const hasSupabase = process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+  if (hasSupabase) {
+    let response = NextResponse.next()
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+      {
+        cookies: {
+          getAll: () => req.cookies.getAll(),
+          setAll: (cookiesToSet) => {
+            cookiesToSet.forEach(({ name, value }) => req.cookies.set(name, value))
+            response = NextResponse.next({ request: req })
+            cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options))
+          },
+        },
+      }
+    )
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user) return response
   }
 
   // Not authenticated — redirect to login
   // Try Supabase login first if configured, else fall back to password gate
-  const hasSupabase = process.env.NEXT_PUBLIC_SUPABASE_URL
   const url = req.nextUrl.clone()
   url.pathname = hasSupabase ? "/login" : "/gate"
   return NextResponse.redirect(url)

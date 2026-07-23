@@ -119,6 +119,30 @@ export default function Nona() {
       setPushBusy(false)
     }
   }
+
+  const [disconnectingProvider, setDisconnectingProvider] = useState(null)
+
+  // Disconnects only the given provider (Gmail or Outlook), leaving the other
+  // one signed in — signOut() would clear both, which is what "Disconnect all"
+  // is for instead.
+  async function disconnectProvider(provider) {
+    setDisconnectingProvider(provider)
+    try {
+      const r = await fetch("/api/auth/disconnect-provider", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider }),
+      })
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}))
+        throw new Error(d.error || "Failed to disconnect")
+      }
+      window.location.reload()
+    } catch (err) {
+      alert(err.message)
+      setDisconnectingProvider(null)
+    }
+  }
   const [obStep, setObStep] = useState(1)
   const [obName, setObName] = useState("")
   const [obChild, setObChild] = useState("")
@@ -723,7 +747,7 @@ export default function Nona() {
         <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Syne:wght@400;500;600&display=swap" rel="stylesheet" />
       </Head>
 
-      <style>{`
+      <style jsx global>{`
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
         :root {
           --black: #0D0C0A; --gold: #E8C87A; --gold-dim: rgba(232,200,122,0.13);
@@ -1108,6 +1132,25 @@ export default function Nona() {
                 <div style={{ fontSize: 12, color: "var(--muted)" }}>Nona reads and prioritises your emails</div>
               </div>
 
+              {session && (
+                <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+                  <span style={{
+                    fontSize: 11, padding: "5px 10px", borderRadius: 20, border: "1px solid var(--border)",
+                    background: session.providers?.google ? "var(--gold-dim)" : "transparent",
+                    color: session.providers?.google ? "var(--gold)" : "var(--muted)",
+                  }}>
+                    {session.providers?.google ? `✓ Gmail — ${session.providers.google.email}` : "✕ Gmail not connected"}
+                  </span>
+                  <span style={{
+                    fontSize: 11, padding: "5px 10px", borderRadius: 20, border: "1px solid var(--border)",
+                    background: session.providers?.microsoft ? "var(--gold-dim)" : "transparent",
+                    color: session.providers?.microsoft ? "var(--gold)" : "var(--muted)",
+                  }}>
+                    {session.providers?.microsoft ? `✓ Outlook — ${session.providers.microsoft.email}` : "✕ Outlook not connected"}
+                  </span>
+                </div>
+              )}
+
               {!session ? (
                 <div className="card">
                   <span className="label">Connect your email</span>
@@ -1398,14 +1441,21 @@ export default function Nona() {
                 </button>
               </div>
 
-              <div style={{ fontSize: 10, color: "var(--gold)", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, marginBottom: 8, padding: "0 4px" }}>Email</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, padding: "0 4px" }}>
+                <span style={{ fontSize: 10, color: "var(--gold)", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600 }}>Email</span>
+                {(session?.providers?.google || session?.providers?.microsoft) && (
+                  <button className="btn-sm" style={{ fontSize: 11, color: "#e87a7a" }} onClick={() => signOut()}>Disconnect all</button>
+                )}
+              </div>
               {session?.providers?.google ? (
                 <div className="settings-row">
                   <div>
                     <div style={{ fontSize: 14 }}>Gmail connected ✓</div>
                     <div style={{ fontSize: 12, color: "var(--muted)" }}>{session.providers.google.email}</div>
                   </div>
-                  <button className="btn-sm" onClick={() => signOut()}>Disconnect all</button>
+                  <button className="btn-sm" disabled={disconnectingProvider === "google"} onClick={() => disconnectProvider("google")}>
+                    {disconnectingProvider === "google" ? "…" : "Disconnect"}
+                  </button>
                 </div>
               ) : (
                 <div className="settings-row">
@@ -1420,7 +1470,9 @@ export default function Nona() {
                     <div style={{ fontSize: 14 }}>Outlook connected ✓</div>
                     <div style={{ fontSize: 12, color: "var(--muted)" }}>{session.providers.microsoft.email}</div>
                   </div>
-                  <button className="btn-sm" onClick={() => signOut()}>Disconnect all</button>
+                  <button className="btn-sm" disabled={disconnectingProvider === "microsoft"} onClick={() => disconnectProvider("microsoft")}>
+                    {disconnectingProvider === "microsoft" ? "…" : "Disconnect"}
+                  </button>
                 </div>
               ) : (
                 <div className="settings-row">
