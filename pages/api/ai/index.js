@@ -38,10 +38,21 @@ export default async function handler(req, res) {
       // snippet while keeping the whole call fast enough to finish in time.
       const emailList = emails
         .map((e, i) => {
-          // PDF attachments (e-tickets, hotel confirmations) get appended at the end
-          // of body — give these emails more room so that content isn't truncated away.
-          const limit = e.hasPdf ? 2200 : 1000
-          return `[${i + 1}] From: ${e.from}\nSubject: ${e.subject}\nContent: ${(e.body || e.snippet || "").slice(0, limit)}`
+          const full = e.body || e.snippet || ""
+          // PDF attachments (e-tickets, hotel confirmations) get appended after the
+          // raw body as "[Attachment...]". A flat slice(0, 2200) let a long marketing/
+          // legal preamble in the body crowd out the attachment text entirely — which
+          // is where the actual flight number/date usually lives — so a flight ticket
+          // could reach the AI with its real details already cut off. Reserve room for
+          // the attachment explicitly instead of slicing the concatenated string blind.
+          let content
+          const attIdx = e.hasPdf ? full.indexOf("[Attachment") : -1
+          if (attIdx !== -1) {
+            content = full.slice(0, attIdx).slice(0, 600) + full.slice(attIdx).slice(0, 1800)
+          } else {
+            content = full.slice(0, e.hasPdf ? 2200 : 1000)
+          }
+          return `[${i + 1}] From: ${e.from}\nSubject: ${e.subject}\nContent: ${content}`
         })
         .join("\n\n")
 
@@ -80,6 +91,8 @@ Return ONLY valid JSON, no markdown, no explanation:
 }
 
 Also extract calendar_events: any email that mentions a specific date + event (booking confirmation, meeting, flight, lunch, appointment, delivery) should produce a calendar event with a short title and the resolved date. Use today's date to resolve relative dates ("tomorrow", "next Tuesday"). Only extract events with a clear specific date — not vague timeframes.
+
+Flight bookings and e-tickets need special care: create a SEPARATE calendar event for EACH leg of the trip — one for the outbound departure date, and another for the return departure date if it's a round trip (a booking confirmation email often covers both in one email, and both must be extracted, not just the first). Use the actual flight departure date, never the date the email was sent or booked. Title each one with the route and, if visible, the flight number, e.g. "✈ LGW→LIS FR1234"; fall back to "✈ Flight to [destination]" if the flight number isn't in the text.
 
 For the tasks array: for EVERY email in urgent or action, extract at least one concrete task phrased as something to do. E.g. "Reply to Maria about contract renewal", "Pay invoice from BGL", "Confirm dentist appointment for 8 Jul". Do not leave tasks empty if there are action items.
 

@@ -38,7 +38,7 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 | ✅ Password visibility toggle | Show/Hide button on both the login page and the legacy password gate |
 | ✅ Mail tab shows connected accounts | Small status pills at the top of Mail — see at a glance which of Gmail/Outlook are connected, so a failed connection is obvious without going to Settings |
 | ✅ Disconnect one email account without losing the other | Fixed 23 Jul 2026 — "Disconnect all" was the only option, and it did exactly that even when clicked from just the Gmail or just the Outlook row. Each provider now has its own Disconnect; an explicit "Disconnect all" sits above both if you want to sign out of everything at once. |
-| ✅ Email → Calendar auto-detection | Already shipped, just not marked here — triage extracts `calendar_events` from dated emails (bookings, flights, appointments) and auto-adds them to the week view |
+| ✅ Email → Calendar auto-detection | Already shipped — triage extracts `calendar_events` from dated emails (bookings, flights, appointments) and auto-adds them to the week view. Flight reliability fixed 24 Jul 2026: (1) PDF-extracted e-ticket text was silently getting truncated out of the triage prompt whenever the email body before it was long — `pages/api/ai/index.js` now reserves room for the attachment text instead of slicing the concatenated string blind; (2) prompt now explicitly asks for a separate calendar event per flight leg (outbound + return) with route/flight-number titles; (3) `pages/api/email/gmail.js` was silently dropping any email past the 40-most-recent full-fetch cap — added a small subject-keyword top-up so older travel confirmations aren't skipped; (4) `pages/api/email/outlook.js` fetched all messages via an unbounded `Promise.all`, where one failed message took the whole inbox fetch down — switched to the same batched `allSettled` pattern Gmail already used. |
 | ✅ Global email filter rules | Already shipped — Settings → Email filter rules, permanent sender/subject blocklist applied before triage |
 | ✅ Voice: stop recording button | Already shipped — explicit red stop control while the mic is active |
 | ✅ Voice: live transcript editing | Already shipped — transcript is editable before it's parsed into tasks |
@@ -51,7 +51,7 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 
 | Size | Feature | Notes |
 |------|---------|-------|
-| ✅ | **Outlook connection** | Done — Microsoft Graph API via proper OAuth 2.0. Azure app registered, MICROSOFT_CLIENT_ID + MICROSOFT_CLIENT_SECRET in Vercel. Personal Microsoft accounts only. Mail.Read scope. Options: (1) Supabase Azure OAuth provider — redirect goes to Supabase, simpler than direct Azure; (2) Azure app registration pointing at Supabase callback URL. Need to configure in Supabase Dashboard → Authentication → Providers → Azure. |
+| ✅ | **Outlook connection** | Done — Microsoft Graph API via proper OAuth 2.0, using a direct Azure app registration + a custom NextAuth provider (`pages/api/auth/[...nextauth].js`), not through Supabase's own Azure provider. Personal Microsoft accounts only (`/consumers` endpoint), `Mail.Read` scope. `MICROSOFT_CLIENT_ID`/`MICROSOFT_CLIENT_SECRET` confirmed working locally 23 Jul 2026 — make sure both are also set in Vercel. |
 
 ---
 
@@ -113,4 +113,4 @@ Audited 23 Jul 2026 — everything below is confirmed genuinely not built except
 - Brief = bullet list of action items only, no narrative
 - Tasks = separate date field, AI-parsed, grouped by date
 - Email dismiss = permanent, synced to Supabase
-- Outlook = top priority to fix via Supabase Azure OAuth
+- Outlook = direct Azure app registration + custom NextAuth provider (not Supabase's Azure provider)

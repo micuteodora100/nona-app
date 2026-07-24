@@ -131,6 +131,32 @@ export default async function handler(req, res) {
     const MAX_FULL_FETCH = 40
     const toFetch = messages.slice(0, MAX_FULL_FETCH)
 
+    // The 40-most-recent cap above means an older travel confirmation (flight,
+    // e-ticket, hotel) can silently never reach the AI once enough newer mail has
+    // arrived since — bad specifically for calendar events, which often come from
+    // an email sent well before the trip. Top up with a small, separately-queried
+    // batch of older booking-looking emails (by subject) so they aren't dropped
+    // just for being old. Kept deliberately small to avoid reintroducing the
+    // serverless-timeout issue that capping at 40 was originally fixing.
+    const MAX_TRAVEL_TOPUP = 10
+    let travelTopup = []
+    if (messages.length > MAX_FULL_FETCH) {
+      try {
+        const alreadyFetched = new Set(toFetch.map((m) => m.id))
+        const travelRes = await gmail.users.messages.list({
+          userId: "me",
+          q: "in:inbox newer_than:90d subject:(flight OR e-ticket OR eticket OR boarding OR itinerary OR booking OR reservation OR confirmation)",
+          maxResults: MAX_FULL_FETCH + MAX_TRAVEL_TOPUP,
+        })
+        travelTopup = (travelRes.data.messages || [])
+          .filter((m) => !alreadyFetched.has(m.id))
+          .slice(0, MAX_TRAVEL_TOPUP)
+      } catch (err) {
+        console.error("Gmail travel top-up search failed:", err.message)
+      }
+    }
+    const toFetchAll = [...toFetch, ...travelTopup]
+
     // Cap total PDF attachment fetches per request — extracting text from a PDF
     // (download + parse) is much slower than reading email body, so this protects
     // the 30s serverless timeout when many emails have attachments at once.
@@ -178,8 +204,8 @@ export default async function handler(req, res) {
 
     const emails = []
     const failedIds = []
-    for (let i = 0; i < toFetch.length; i += BATCH_SIZE) {
-      const batch = toFetch.slice(i, i + BATCH_SIZE)
+    for (let i = 0; i < toFetchAll.length; i += BATCH_SIZE) {
+      const batch = toFetchAll.slice(i, i + BATCH_SIZE)
       const results = await Promise.allSettled(batch.map(fetchOne))
       results.forEach((r, idx) => {
         if (r.status === "fulfilled") {
@@ -192,10 +218,10 @@ export default async function handler(req, res) {
     }
 
     if (failedIds.length > 0) {
-      console.warn(`Gmail: ${failedIds.length}/${toFetch.length} messages failed to fetch, continuing with the rest`)
+      console.warn(`Gmail: ${failedIds.length}/${toFetchAll.length} messages failed to fetch, continuing with the rest`)
     }
 
-    res.json({ emails, source: "gmail", skipped: messages.length - toFetch.length, failed: failedIds.length })
+    res.json({ emails, source: "gmail", skipped: messages.length - toFetch.length, travelTopup: travelTopup.length, failed: failedIds.length })
   } catch (err) {
     console.error("Gmail error:", err.message)
     res.status(500).json({ error: err.message })

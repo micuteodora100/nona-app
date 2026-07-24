@@ -88,37 +88,60 @@ export default async function handler(req, res) {
     const MAX_PDF_FETCHES = 15
     let pdfFetchCount = 0
 
-    const emails = await Promise.all(
-      rawMessages.map(async (msg) => {
-        const raw = msg.body?.content || ""
-        const plain = msg.body?.contentType === "html" ? stripHtml(raw) : raw
-        let body = plain.slice(0, 3000)
+    async function fetchOne(msg) {
+      const raw = msg.body?.content || ""
+      const plain = msg.body?.contentType === "html" ? stripHtml(raw) : raw
+      let body = plain.slice(0, 3000)
 
-        let hasPdf = false
-        if (msg.hasAttachments && pdfFetchCount < MAX_PDF_FETCHES) {
-          pdfFetchCount++
-          const pdfText = await extractPdfTextFromMessage(msg.id, accessToken)
-          if (pdfText) {
-            hasPdf = true
-            body += `\n\n[Attachment]\n${pdfText}`
-          }
+      let hasPdf = false
+      if (msg.hasAttachments && pdfFetchCount < MAX_PDF_FETCHES) {
+        pdfFetchCount++
+        const pdfText = await extractPdfTextFromMessage(msg.id, accessToken)
+        if (pdfText) {
+          hasPdf = true
+          body += `\n\n[Attachment]\n${pdfText}`
         }
+      }
 
-        return {
-          id: msg.id,
-          from: `${msg.from?.emailAddress?.name || ""} <${msg.from?.emailAddress?.address || ""}>`,
-          subject: msg.subject || "(no subject)",
-          date: msg.receivedDateTime,
-          snippet: msg.bodyPreview || "", // short preview, still used for UI cards
-          body,                            // full(er) content, used for AI triage/parsing
-          isRead: msg.isRead,
-          hasPdf,
-          source: "outlook",
+      return {
+        id: msg.id,
+        from: `${msg.from?.emailAddress?.name || ""} <${msg.from?.emailAddress?.address || ""}>`,
+        subject: msg.subject || "(no subject)",
+        date: msg.receivedDateTime,
+        snippet: msg.bodyPreview || "", // short preview, still used for UI cards
+        body,                            // full(er) content, used for AI triage/parsing
+        isRead: msg.isRead,
+        hasPdf,
+        source: "outlook",
+      }
+    }
+
+    // Was an unbounded Promise.all over up to 100 messages — one failed fetch
+    // (a single flaky Graph call) rejected the whole batch and returned nothing,
+    // silently killing triage and calendar extraction for the entire inbox.
+    // Batch + allSettled matches the Gmail route's already-safe pattern, and
+    // keeps every message in scope (no new 40-style cap introduced here).
+    const BATCH_SIZE = 10
+    const emails = []
+    const failedIds = []
+    for (let i = 0; i < rawMessages.length; i += BATCH_SIZE) {
+      const batch = rawMessages.slice(i, i + BATCH_SIZE)
+      const results = await Promise.allSettled(batch.map(fetchOne))
+      results.forEach((r, idx) => {
+        if (r.status === "fulfilled") {
+          emails.push(r.value)
+        } else {
+          failedIds.push(batch[idx].id)
+          console.error("Outlook message fetch failed:", batch[idx].id, r.reason?.message)
         }
       })
-    )
+    }
 
-    res.json({ emails, source: "outlook" })
+    if (failedIds.length > 0) {
+      console.warn(`Outlook: ${failedIds.length}/${rawMessages.length} messages failed to fetch, continuing with the rest`)
+    }
+
+    res.json({ emails, source: "outlook", failed: failedIds.length })
   } catch (err) {
     console.error("Outlook Graph error:", err.message)
     res.status(500).json({ error: err.message })
