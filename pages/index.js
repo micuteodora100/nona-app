@@ -78,6 +78,73 @@ function weatherIcon(code) {
   return "🌤"
 }
 
+// Task/calendar dates are plain "YYYY-MM-DD" strings with no time-of-day meaning.
+// new Date("YYYY-MM-DD") parses that as UTC midnight (per spec), and
+// date.toISOString() always emits UTC — round-tripping either one through the
+// local timezone shifts the displayed/compared day by one for anyone not
+// exactly on UTC (e.g. Luxembourg's UTC+1/+2 shifts it backward a day, tapping
+// "Sat 25" and having it save/label as "Fri 24"). These two helpers stay in
+// local time throughout so a calendar day always means the day that was shown.
+function parseLocalDate(isoDate) {
+  const [y, m, d] = isoDate.split("-").map(Number)
+  return new Date(y, m - 1, d)
+}
+
+function toISODate(date) {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, "0")
+  const d = String(date.getDate()).padStart(2, "0")
+  return `${y}-${m}-${d}`
+}
+
+const DOW_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+const WEEKS_AHEAD_RECURRING = 8
+
+// Turns a recurring template ({id, text, days: [0-6], tag}) into real dated
+// tasks tagged with recurringId, same as any other task everywhere else
+// (calendar, brief, Tasks tab) — no special-casing needed at render time.
+// Only ever extends FORWARD from whatever's already been generated for a
+// given series; it never backfills a date, so deleting one occurrence (e.g.
+// skipping football one Saturday) doesn't get silently regenerated next time
+// this runs — it just stops covering that date going forward from the gap.
+function materializeRecurring(currentTasks, recurring) {
+  if (!recurring?.length) return currentTasks
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const horizon = new Date(today)
+  horizon.setDate(today.getDate() + WEEKS_AHEAD_RECURRING * 7)
+
+  const newOnes = []
+  for (const r of recurring) {
+    if (!r.days?.length) continue
+    const existingDates = currentTasks.filter(t => t.recurringId === r.id).map(t => t.date).sort()
+    const latest = existingDates.length ? parseLocalDate(existingDates[existingDates.length - 1]) : new Date(today.getTime() - 86400000)
+    const start = new Date(Math.max(today.getTime(), latest.getTime() + 86400000))
+    for (let d = new Date(start); d <= horizon; d.setDate(d.getDate() + 1)) {
+      if (r.days.includes(d.getDay())) {
+        newOnes.push({
+          id: `${r.id}-${toISODate(d)}`,
+          text: r.text, date: toISODate(d), done: false,
+          tag: r.tag || guessTag(r.text) || "family",
+          recurringId: r.id,
+        })
+      }
+    }
+  }
+  return newOnes.length ? [...newOnes, ...currentTasks] : currentTasks
+}
+
+function weatherLabel(code) {
+  if (code === 0) return "Clear"
+  if (code <= 2) return "Partly cloudy"
+  if (code <= 3) return "Cloudy"
+  if (code <= 48) return "Foggy"
+  if (code <= 67) return "Rainy"
+  if (code <= 77) return "Snowy"
+  if (code <= 99) return "Stormy"
+  return ""
+}
+
 // ── component ─────────────────────────────────────────────────────────────
 export default function Nona() {
   const { data: session } = useSession()
@@ -151,7 +218,7 @@ export default function Nona() {
   const [obCreche, setObCreche] = useState("")
   const [obWork, setObWork] = useState("")
 
-  const [profile, setProfile] = useState({ name: "", child: "", briefTime: "07:00", work: "", creche: "", language: "en-GB", emailFilters: [] })
+  const [profile, setProfile] = useState({ name: "", child: "", briefTime: "07:00", work: "", creche: "", language: "en-GB", emailFilters: [], recurring: [] })
   const [tasks, setTasks] = useState([])
   const [tab, setTab] = useState("home") // home | tasks | mail | settings
   const [weekOffset, setWeekOffset] = useState(0) // weeks from current week
@@ -181,7 +248,7 @@ export default function Nona() {
     if (s?.onboarded) {
       setOnboarded(true)
       setProfile(s.profile || {})
-      setTasks(s.tasks || [])
+      setTasks(materializeRecurring(s.tasks || [], s.profile?.recurring))
     }
   }, [])
 
@@ -511,12 +578,33 @@ export default function Nona() {
   // ── tasks ─────────────────────────────────────────────────────────────
   const [taskAdding, setTaskAdding] = useState(false)
   const [voiceRecording, setVoiceRecording] = useState(false)
-  const [voiceTranscript, setVoiceTranscript] = useState("")
-  const [voiceEditing, setVoiceEditing] = useState(false) // allow editing transcript before parse
-  const [voiceStatus, setVoiceStatus] = useState("") // "listening" | "thinking" | ""
+  const [voiceTranscript, setVoiceTranscript] = useState("") // shared draft text — filled by typing or by speech recognition
+  const [voiceStatus, setVoiceStatus] = useState("") // "listening" | "thinking" | "" | an error message to show as placeholder
   const recognitionRef = { current: null }
   const [taskGroupBy, setTaskGroupBy] = useState("date") // date | tag | none
   const [editingTaskId, setEditingTaskId] = useState(null)
+  const [addingForDate, setAddingForDate] = useState(null) // ISO date of the calendar day currently showing its quick-add row
+  const [dateTaskInput, setDateTaskInput] = useState("")
+  const [newRecurringText, setNewRecurringText] = useState("")
+  const [newRecurringDays, setNewRecurringDays] = useState([])
+
+  function addRecurring() {
+    const text = newRecurringText.trim()
+    if (!text || newRecurringDays.length === 0) return
+    const r = { id: String(Date.now() + Math.random()), text, days: [...newRecurringDays].sort(), tag: guessTag(text) || "family" }
+    const nextRecurring = [...(profile.recurring || []), r]
+    setProfile(p => ({ ...p, recurring: nextRecurring }))
+    setTasks(prev => materializeRecurring(prev, nextRecurring))
+    setNewRecurringText("")
+    setNewRecurringDays([])
+  }
+
+  function removeRecurring(id) {
+    // Only stops future occurrences — doesn't retroactively delete instances
+    // already generated, since those are just normal tasks by this point and
+    // may already be checked off or otherwise acted on.
+    setProfile(p => ({ ...p, recurring: (p.recurring || []).filter(r => r.id !== id) }))
+  }
 
   async function parseTasksFromText(text) {
     try {
@@ -543,9 +631,53 @@ export default function Nona() {
 
   function formatDateShort(isoDate) {
     try {
-      const d = new Date(isoDate)
-      return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })
+      return parseLocalDate(isoDate).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })
     } catch { return isoDate }
+  }
+
+  // ── avatar — either an uploaded photo or a colored-initial fallback,
+  // stored inline in `profile` (already synced to Supabase as JSON) so it
+  // doesn't need any new storage infra ──────────────────────────────────
+  const AVATAR_COLORS = ["#FF6B4A", "#8B7FD1", "#4FA37C", "#4A9FD8", "#E0709B", "#D9A441"]
+
+  function renderAvatar(size) {
+    if (profile.avatarUrl) {
+      return <img src={profile.avatarUrl} alt="" style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", border: "1px solid var(--border)", flexShrink: 0 }} />
+    }
+    const initial = (profile.name || "N").trim().charAt(0).toUpperCase()
+    return (
+      <div style={{
+        width: size, height: size, borderRadius: "50%", flexShrink: 0,
+        background: profile.avatarColor || "var(--gold)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        color: "#FFFFFF", fontSize: Math.round(size * 0.42), fontWeight: 600,
+      }}>{initial}</div>
+    )
+  }
+
+  function handleAvatarFile(e) {
+    const file = e.target.files?.[0]
+    e.target.value = "" // allow re-selecting the same file later
+    if (!file || !file.type.startsWith("image/")) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const img = new Image()
+      img.onload = () => {
+        // Resize/crop to a small square so the data URI stays cheap to store
+        // inline in the profile JSON (no Supabase Storage bucket needed).
+        const size = 200
+        const canvas = document.createElement("canvas")
+        canvas.width = size
+        canvas.height = size
+        const ctx = canvas.getContext("2d")
+        const scale = Math.max(size / img.width, size / img.height)
+        const w = img.width * scale, h = img.height * scale
+        ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h)
+        setProfile(p => ({ ...p, avatarUrl: canvas.toDataURL("image/jpeg", 0.85) }))
+      }
+      img.src = reader.result
+    }
+    reader.readAsDataURL(file)
   }
 
   function getWeekDays(offset) {
@@ -560,8 +692,8 @@ export default function Nona() {
     for (let i = 0; i < 7; i++) {
       const d = new Date(monday)
       d.setDate(monday.getDate() + i)
-      const iso = d.toISOString().slice(0, 10)
-      const isToday = iso === today.toISOString().slice(0, 10)
+      const iso = toISODate(d)
+      const isToday = iso === toISODate(today)
       const dayTasks = tasks.filter(t => t.date === iso && !t.done)
       days.push({ date: d, iso, isToday, label: d.toLocaleDateString("en-GB", { weekday: "short" })[0], num: d.getDate(), tasks: dayTasks })
     }
@@ -592,7 +724,6 @@ export default function Nona() {
     recognitionRef.current = recognition
 
     setVoiceRecording(true)
-    setVoiceEditing(false)
     setVoiceStatus("listening")
     setVoiceTranscript("")
 
@@ -603,16 +734,13 @@ export default function Nona() {
       setVoiceTranscript(transcript)
     }
 
-    recognition.onend = async () => {
+    // Recording stops but the transcript stays in the box, still editable —
+    // same field the user could've typed into, so it needs an explicit tap
+    // on the send button (or Enter) to actually add the tasks.
+    recognition.onend = () => {
       setVoiceRecording(false)
       recognitionRef.current = null
-      // Show editable transcript so user can correct before parsing
-      if (voiceTranscriptRef.current?.trim()) {
-        setVoiceEditing(true)
-        setVoiceStatus("edit")
-      } else {
-        setVoiceStatus("")
-      }
+      setVoiceStatus("")
     }
 
     recognition.onerror = () => {
@@ -634,13 +762,31 @@ export default function Nona() {
 
   async function confirmVoiceTasks() {
     const text = voiceTranscriptRef.current
-    if (!text?.trim()) { setVoiceEditing(false); setVoiceStatus(""); return }
-    setVoiceEditing(false)
+    if (!text?.trim()) { setVoiceStatus(""); return }
     setVoiceStatus("thinking")
-    const newTasks = await parseTasksFromText(text)
-    setTasks(prev => [...newTasks, ...prev])
-    setVoiceTranscript("")
-    setVoiceStatus("")
+    try {
+      const newTasks = await parseTasksFromText(text)
+      setTasks(prev => [...newTasks, ...prev])
+      setVoiceTranscript("")
+      setVoiceStatus("")
+    } catch (e) {
+      // Without this, a thrown error left the box stuck on "Adding…" forever
+      // with the text trapped and no way to recover except a page refresh.
+      setVoiceStatus("Couldn't add that — try again")
+      setTimeout(() => setVoiceStatus(""), 3000)
+    }
+  }
+
+  async function submitDateTask() {
+    const text = dateTaskInput.trim()
+    if (!text || !addingForDate) return
+    setDateTaskInput("")
+    const parsed = await parseTasksFromText(text)
+    // Force every parsed task onto the day that was actually clicked — the point
+    // of adding from a specific calendar day is that date is already decided,
+    // even if the AI's own date-parsing on the text would've guessed differently.
+    const dated = parsed.map(t => ({ ...t, date: addingForDate }))
+    setTasks(prev => [...dated, ...prev])
   }
 
   // Ref to capture latest transcript value inside async callback
@@ -740,22 +886,30 @@ export default function Nona() {
         <title>Nona</title>
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <meta name="apple-mobile-web-app-title" content="Nona" />
-        <meta name="theme-color" content="#0D0C0A" />
+        <meta name="theme-color" content="#FBF6EE" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Syne:wght@400;500;600&display=swap" rel="stylesheet" />
       </Head>
 
       <style jsx global>{`
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        /* Warm light theme (24 Jul 2026) — variable names kept as-is to avoid a
+           mass rename across ~120 usages, but roles shifted: --black is now the
+           contrast color used on top of --gold-filled buttons/badges (white,
+           since the new accent is a saturated coral rather than a light gold),
+           --white is now the primary ink text color, and page background moved
+           to its own --bg since bg and button-contrast-text are no longer the
+           same color the way black/gold were. */
         :root {
-          --black: #0D0C0A; --gold: #E8C87A; --gold-dim: rgba(232,200,122,0.13);
-          --gold-mid: rgba(232,200,122,0.35); --white: #F5F0E8;
-          --muted: rgba(245,240,232,0.45); --surface: rgba(255,255,255,0.04);
-          --border: rgba(232,200,122,0.12); --radius: 16px;
+          --bg: #FBF6EE; --black: #FFFFFF; --gold: #FF6B4A; --gold-dim: rgba(255,107,74,0.12);
+          --gold-mid: rgba(255,107,74,0.35); --white: #2A2733;
+          --muted: rgba(42,39,51,0.5); --surface: #FFFFFF;
+          --border: rgba(42,39,51,0.08); --radius: 16px;
+          --shadow: 0 1px 2px rgba(42,39,51,0.04), 0 4px 12px rgba(42,39,51,0.05);
         }
-        html, body { height: 100%; background: var(--black); color: var(--white);
+        html, body { height: 100%; background: var(--bg); color: var(--white);
           font-family: 'Syne', sans-serif; overflow: hidden;
           -webkit-tap-highlight-color: transparent; -webkit-font-smoothing: antialiased; }
         #__next { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
@@ -771,7 +925,8 @@ export default function Nona() {
 
         /* Cards */
         .card { background: var(--surface); border: 1px solid var(--border);
-          border-radius: var(--radius); padding: 18px; margin-bottom: 14px; position: relative; overflow: hidden; }
+          border-radius: var(--radius); padding: 18px; margin-bottom: 14px; position: relative; overflow: hidden;
+          box-shadow: var(--shadow); }
         .card-accent::before { content: ''; position: absolute; top: 0; left: 0; right: 0;
           height: 2px; background: linear-gradient(90deg, var(--gold), transparent); }
 
@@ -786,6 +941,7 @@ export default function Nona() {
         .input::placeholder { color: var(--muted); }
         .input:focus { border-color: var(--gold-mid); }
         textarea.input { resize: none; line-height: 1.5; }
+        .capture-box:focus-within { border-color: var(--gold-mid) !important; }
 
         /* Buttons */
         .btn { border-radius: 12px; font-size: 15px; font-weight: 600;
@@ -826,7 +982,7 @@ export default function Nona() {
 
         /* Header */
         .header { display: flex; align-items: center; justify-content: space-between;
-          padding: 16px 20px 10px; flex-shrink: 0; }
+          padding: 16px 20px 10px; flex-shrink: 0; position: relative; }
 
         /* Tabs */
         .tabs { display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0; padding: 0 20px; }
@@ -941,7 +1097,10 @@ export default function Nona() {
           <div className="header">
             {tab === "home" ? (
               <>
-                <span className="serif" style={{ fontSize: 24, color: "var(--gold)" }}>nona</span>
+                <button onClick={() => setTab("settings")} title="Your profile" style={{ padding: 0, lineHeight: 0 }}>
+                  {renderAvatar(32)}
+                </button>
+                <span className="serif" style={{ fontSize: 22, color: "var(--gold)", position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)" }}>nona</span>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                   <span style={{ fontSize: 12, color: "var(--muted)" }}>{dateStr}</span>
                   <button onClick={() => setTab("settings")} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 32, height: 32, borderRadius: "50%", background: "var(--surface)", border: "1px solid var(--border)" }} title="Settings">
@@ -972,85 +1131,28 @@ export default function Nona() {
               <div style={{ marginBottom: 18, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div className="serif" style={{ fontSize: 20 }}>{greeting}, {firstName}</div>
                 {weather && (
-                  <div style={{ background: "var(--gold-dim)", border: "1px solid var(--border)", borderRadius: 8, padding: "5px 10px", fontSize: 12, color: "var(--gold)", whiteSpace: "nowrap" }}>
-                    {weatherIcon(weather.code)} {weather.temp !== null ? `${weather.temp}°` : "–"}
+                  <div style={{ background: "var(--gold-dim)", border: "1px solid var(--border)", borderRadius: 14, padding: "8px 14px", textAlign: "right", flexShrink: 0 }}>
+                    <div style={{ fontSize: 16, color: "var(--gold)", fontWeight: 600, whiteSpace: "nowrap" }}>
+                      {weatherIcon(weather.code)} {weather.temp !== null ? `${weather.temp}°` : "–"}
+                    </div>
+                    <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 1 }}>{weatherLabel(weather.code)}</div>
                   </div>
                 )}
               </div>
 
-              {/* Voice capture — primary input on home */}
-              <div style={{ marginBottom: 20 }}>
-                {voiceEditing ? (
-                  <div style={{ background: "var(--surface)", border: "1px solid var(--gold-mid)", borderRadius: 14, padding: "16px 20px" }}>
-                    <div style={{ fontSize: 12, color: "var(--gold)", marginBottom: 8, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>✎ Edit before adding</div>
-                    <textarea className="input" style={{ width: "100%", minHeight: 64, fontSize: 14, marginBottom: 12 }}
-                      value={voiceTranscript} onChange={e => setVoiceTranscript(e.target.value)} autoFocus />
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button className="btn btn-gold" style={{ flex: 1, padding: "10px" }} onClick={confirmVoiceTasks}>Add tasks →</button>
-                      <button className="btn btn-outline" style={{ padding: "10px 16px" }} onClick={() => { setVoiceEditing(false); setVoiceTranscript(""); setVoiceStatus("") }}>Cancel</button>
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    onClick={voiceRecording ? stopVoiceCapture : startVoiceCapture}
-                    disabled={voiceStatus === "thinking"}
-                    style={{
-                      width: "100%", background: voiceRecording ? "rgba(232,122,122,0.15)" : "var(--surface)",
-                      border: `1px solid ${voiceRecording ? "rgba(232,122,122,0.5)" : "var(--border)"}`,
-                      borderRadius: 14, padding: "16px 20px", cursor: "pointer",
-                      display: "flex", alignItems: "center", gap: 14, transition: "all 0.2s",
-                    }}
-                  >
-                    <div style={{
-                      width: 44, height: 44, borderRadius: "50%", flexShrink: 0,
-                      background: voiceRecording ? "rgba(232,122,122,0.2)" : "var(--gold-dim)",
-                      border: `1.5px solid ${voiceRecording ? "rgba(232,122,122,0.6)" : "var(--gold-mid)"}`,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                    }}>
-                      {voiceRecording
-                        ? <svg viewBox="0 0 24 24" fill="#e87a7a" width="20" height="20"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-                        : <svg viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="2" strokeLinecap="round" width="20" height="20">
-                            <rect x="9" y="2" width="6" height="11" rx="3"/>
-                            <path d="M19 10v1a7 7 0 0 1-14 0v-1"/><line x1="12" y1="19" x2="12" y2="22"/>
-                          </svg>
-                      }
-                    </div>
-                    <div style={{ flex: 1, textAlign: "left" }}>
-                      <div style={{ fontSize: 14, color: voiceRecording ? "#e87a7a" : "var(--white)", fontWeight: 500 }}>
-                        {voiceRecording ? "Tap to stop recording" : voiceStatus === "thinking" ? "Adding tasks…" : "What's on your mind?"}
-                      </div>
-                      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
-                        {voiceTranscript || (voiceStatus === "" ? "Tap to speak — say anything" : "")}
-                      </div>
-                    </div>
-                    {voiceRecording && (
-                      <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
-                        {[0, 0.15, 0.3].map((delay, i) => (
-                          <div key={i} style={{ width: 3, height: 16, borderRadius: 2, background: "#e87a7a", animation: `blink 0.8s ${delay}s infinite` }} />
-                        ))}
-                      </div>
-                    )}
-                  </button>
-                )}
-              </div>
-
-              {/* Tasks preview */}
+              {/* Morning brief — everything that needs attention today */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                <span className="label" style={{ marginBottom: 0 }}>🧠 Tasks</span>
-                <button onClick={() => setTab("tasks")} style={{ fontSize: 11, color: "var(--muted)" }}>View all ›</button>
+                <span className="label" style={{ marginBottom: 0 }}>☀️ Today</span>
+                <button onClick={generateBrief} disabled={briefLoading} style={{ fontSize: 11, color: "var(--muted)" }}>{briefLoading ? "…" : "↺ Refresh"}</button>
               </div>
-              <div className="card" style={{ padding: "4px 18px", marginBottom: 20 }}>
-                {tasks.filter(t => !t.done && !t.isEvent).length === 0 ? (
-                  <div style={{ padding: "14px 0", fontSize: 13, color: "var(--muted)" }}>Nothing pending — add something on the Tasks page.</div>
-                ) : tasks.filter(t => !t.done && !t.isEvent).slice(0, 4).map((t, i, arr) => (
-                  <div key={t.id} className="task" style={{ margin: 0, background: "transparent", border: "none", borderRadius: 0, padding: "11px 0", borderBottom: i < arr.length - 1 ? "1px solid var(--border)" : "none" }}>
-                    <div className="task-check" onClick={() => toggleTask(t.id)}>
-                      {t.done && <svg viewBox="0 0 24 24" fill="none" stroke="#0D0C0A" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" width="12" height="12"><polyline points="20 6 9 17 4 12" /></svg>}
-                    </div>
-                    <div className="task-text">{t.text}</div>
-                    {t.date && <span className="task-tag" style={{ color: "var(--white)", background: "transparent", border: "1px solid var(--border)" }}>{formatDateShort(t.date)}</span>}
-                  </div>
-                ))}
+              <div className="card" style={{ marginBottom: 20 }}>
+                {briefLoading ? (
+                  <div style={{ padding: "6px 0", fontSize: 13, color: "var(--muted)" }}>Getting your day together…</div>
+                ) : brief ? (
+                  <div style={{ fontSize: 14, lineHeight: 1.7, color: "var(--white)", whiteSpace: "pre-line" }}>{brief}</div>
+                ) : (
+                  <div style={{ padding: "6px 0", fontSize: 13, color: "var(--muted)" }}>Nothing loaded yet.</div>
+                )}
               </div>
 
               {/* Week calendar */}
@@ -1064,28 +1166,55 @@ export default function Nona() {
               <div className="card" style={{ marginBottom: 20 }}>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
                   {getWeekDays(weekOffset).map(d => (
-                    <div key={d.iso} style={{ textAlign: "center" }}>
+                    <button key={d.iso}
+                      onClick={() => { setAddingForDate(addingForDate === d.iso ? null : d.iso); setDateTaskInput("") }}
+                      style={{
+                        textAlign: "center", padding: "3px 0 1px", borderRadius: 8,
+                        background: addingForDate === d.iso ? "var(--gold-dim)" : "transparent",
+                      }}
+                    >
                       <div style={{ fontSize: 9, color: "var(--muted)", marginBottom: 6 }}>{d.label}</div>
                       <div style={{
                         width: 26, height: 26, margin: "0 auto", borderRadius: "50%",
                         display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11,
                         background: d.isToday ? "var(--gold-dim)" : "transparent",
-                        border: d.isToday ? "1px solid var(--gold)" : "none",
+                        border: d.isToday ? "1px solid var(--gold)" : addingForDate === d.iso ? "1px solid var(--gold-mid)" : "none",
                         color: d.isToday ? "var(--gold)" : "var(--white)",
                         fontWeight: d.isToday ? 600 : 400,
                       }}>{d.num}</div>
                       {d.tasks.length > 0 && (
-                        <div style={{ width: 4, height: 4, borderRadius: "50%", background: d.isToday ? "var(--gold)" : "rgba(232,200,122,0.6)", margin: "5px auto 0" }} />
+                        <div style={{ width: 4, height: 4, borderRadius: "50%", background: d.isToday ? "var(--gold)" : "rgba(255,107,74,0.5)", margin: "5px auto 0" }} />
                       )}
-                    </div>
+                    </button>
                   ))}
                 </div>
+
+                {addingForDate && (
+                  <div style={{ marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 12, display: "flex", gap: 8, alignItems: "center" }}>
+                    <input
+                      className="input"
+                      style={{ flex: 1, padding: "9px 12px", fontSize: 13 }}
+                      value={dateTaskInput}
+                      onChange={e => setDateTaskInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); submitDateTask() } }}
+                      placeholder={`Add to ${formatDateShort(addingForDate)}…`}
+                      autoFocus
+                    />
+                    <button onClick={submitDateTask} style={{ background: "var(--gold)", border: "none", borderRadius: 10, width: 36, height: 36, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" width="14" height="14">
+                        <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+                      </svg>
+                    </button>
+                    <button onClick={() => { setAddingForDate(null); setDateTaskInput("") }} style={{ color: "var(--muted)", fontSize: 18, padding: "0 4px", flexShrink: 0 }}>×</button>
+                  </div>
+                )}
+
                 {getWeekDays(weekOffset).some(d => d.tasks.length > 0) && (
                   <div style={{ marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
                     {getWeekDays(weekOffset).filter(d => d.tasks.length > 0).map(d => (
                       d.tasks.map(t => (
                         <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", fontSize: 13 }}>
-                          <div style={{ width: 6, height: 6, borderRadius: "50%", background: d.isToday ? "var(--gold)" : "rgba(232,200,122,0.6)", flexShrink: 0 }} />
+                          <div style={{ width: 6, height: 6, borderRadius: "50%", background: d.isToday ? "var(--gold)" : "rgba(255,107,74,0.5)", flexShrink: 0 }} />
                           <div style={{ width: 44, flexShrink: 0, color: "var(--muted)", fontSize: 12 }}>{d.isToday ? "Today" : d.date.toLocaleDateString("en-GB", { weekday: "short" })}</div>
                           <div style={{ color: "var(--white)" }}>{t.text}</div>
                         </div>
@@ -1095,34 +1224,110 @@ export default function Nona() {
                 )}
               </div>
 
-              {/* Mail preview */}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                <span className="label" style={{ marginBottom: 0 }}>📬 Mail</span>
-                <button onClick={() => { setTab("mail"); if (!triage) fetchEmails() }} style={{ fontSize: 11, color: "var(--muted)" }}>View all ›</button>
-              </div>
-              <div className="card" style={{ marginBottom: 20, cursor: "pointer" }} onClick={() => { setTab("mail"); if (!triage) fetchEmails() }}>
-                <div style={{ fontSize: 13, color: triage?.error ? "#e87a7a" : "var(--white)" }}>
-                  {triage?.error ? "⚠ Inbox check failed — tap for details" : (triage?.summary || "Tap to check your inbox")}
+              {/* Quick actions — speak/type anything, or jump into mail */}
+              <div style={{ marginBottom: 10 }}>
+                <div className="capture-box" style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  background: "var(--surface)", border: `1px solid ${voiceRecording ? "rgba(232,122,122,0.5)" : "var(--border)"}`,
+                  borderRadius: 14, padding: "8px 8px 8px 18px", transition: "border-color 0.2s",
+                  boxShadow: "var(--shadow)",
+                }}>
+                  <input
+                    className="input"
+                    style={{ flex: 1, background: "transparent", border: "none", padding: "8px 0" }}
+                    value={voiceTranscript}
+                    onChange={e => setVoiceTranscript(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter" && !voiceRecording) { e.preventDefault(); confirmVoiceTasks() } }}
+                    readOnly={voiceRecording}
+                    disabled={voiceStatus === "thinking"}
+                    placeholder={
+                      voiceRecording ? "Listening…"
+                      : voiceStatus === "thinking" ? "Adding…"
+                      : voiceStatus && voiceStatus !== "listening" ? voiceStatus
+                      : "Speak or type what's on your mind…"
+                    }
+                  />
+                  <button
+                    onClick={voiceRecording ? stopVoiceCapture : voiceTranscript.trim() ? confirmVoiceTasks : startVoiceCapture}
+                    disabled={voiceStatus === "thinking"}
+                    style={{
+                      width: 40, height: 40, borderRadius: "50%", flexShrink: 0, cursor: "pointer",
+                      background: voiceRecording ? "rgba(232,122,122,0.2)" : voiceTranscript.trim() ? "var(--gold)" : "var(--gold-dim)",
+                      border: voiceRecording ? "1.5px solid rgba(232,122,122,0.6)" : voiceTranscript.trim() ? "none" : "1.5px solid var(--gold-mid)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      opacity: voiceStatus === "thinking" ? 0.6 : 1, transition: "all 0.2s",
+                    }}
+                  >
+                    {voiceStatus === "thinking" ? (
+                      <span className="typing"><span /><span /><span /></span>
+                    ) : voiceRecording ? (
+                      <svg viewBox="0 0 24 24" fill="#e87a7a" width="16" height="16"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+                    ) : voiceTranscript.trim() ? (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" width="16" height="16">
+                        <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="2" strokeLinecap="round" width="18" height="18">
+                        <rect x="9" y="2" width="6" height="11" rx="3" />
+                        <path d="M19 10v1a7 7 0 0 1-14 0v-1" /><line x1="12" y1="19" x2="12" y2="22" />
+                      </svg>
+                    )}
+                  </button>
                 </div>
+                {voiceRecording && (
+                  <div style={{ display: "flex", gap: 3, alignItems: "center", justifyContent: "center", marginTop: 8 }}>
+                    {[0, 0.15, 0.3].map((delay, i) => (
+                      <div key={i} style={{ width: 3, height: 16, borderRadius: 2, background: "#e87a7a", animation: `blink 0.8s ${delay}s infinite` }} />
+                    ))}
+                  </div>
+                )}
               </div>
 
-              {/* Budget placeholder */}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                <span style={{ fontSize: 10, color: "rgba(245,240,232,0.35)", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" }}>💳 Budget</span>
-                <span style={{ fontSize: 11, color: "rgba(245,240,232,0.25)" }}>Coming soon</span>
-              </div>
-              <div style={{ background: "rgba(255,255,255,0.02)", border: "1px dashed rgba(232,200,122,0.1)", borderRadius: 12, padding: 18, marginBottom: 20, textAlign: "center", fontSize: 12, color: "rgba(245,240,232,0.3)" }}>
-                Connect a bank account to see spending here
-              </div>
+              <button onClick={() => { setTab("mail"); fetchEmails(true) }} style={{
+                width: "100%", display: "flex", alignItems: "center", gap: 14, textAlign: "left",
+                background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 14,
+                padding: "12px 16px", marginBottom: 20, boxShadow: "var(--shadow)",
+              }}>
+                <div style={{ width: 40, height: 40, borderRadius: "50%", background: "var(--gold-dim)", border: "1.5px solid var(--gold-mid)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+                    <rect x="2" y="4" width="20" height="16" rx="2" /><path d="m22 6-10 7L2 6" />
+                  </svg>
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, color: "var(--white)", fontWeight: 500 }}>Mail</div>
+                  <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {triage?.error ? "⚠ Inbox check failed" : (triage?.summary || "Tap to check your inbox")}
+                  </div>
+                </div>
+                <svg viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16" style={{ flexShrink: 0 }}>
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+              </button>
 
-              {/* Groceries placeholder */}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                <span style={{ fontSize: 10, color: "rgba(245,240,232,0.35)", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" }}>🛒 Groceries</span>
-                <span style={{ fontSize: 11, color: "rgba(245,240,232,0.25)" }}>Coming soon</span>
-              </div>
-              <div style={{ background: "rgba(255,255,255,0.02)", border: "1px dashed rgba(232,200,122,0.1)", borderRadius: 12, padding: 18, marginBottom: 20, textAlign: "center", fontSize: 12, color: "rgba(245,240,232,0.3)" }}>
-                Connect Lidl or Aldi to track grocery spend
-              </div>
+              {/* Everything captured via "What's on your mind" (voice or typed) — tap through to see it, not shown inline */}
+              <button onClick={() => setTab("tasks")} style={{
+                width: "100%", display: "flex", alignItems: "center", gap: 14, textAlign: "left",
+                background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 14,
+                padding: "12px 16px", marginBottom: 20, boxShadow: "var(--shadow)",
+              }}>
+                <div style={{ width: 40, height: 40, borderRadius: "50%", background: "var(--gold-dim)", border: "1.5px solid var(--gold-mid)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+                    <path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                  </svg>
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, color: "var(--white)", fontWeight: 500 }}>Notes & Tasks</div>
+                  <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+                    {(() => {
+                      const n = tasks.filter(t => !t.done && !t.isEvent).length
+                      return n === 0 ? "Nothing yet — tap to add" : `${n} pending`
+                    })()}
+                  </div>
+                </div>
+                <svg viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16" style={{ flexShrink: 0 }}>
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+              </button>
             </>}
 
             {/* ── EMAIL ── */}
@@ -1301,7 +1506,7 @@ export default function Nona() {
                   {taskAdding ? (
                     <span className="typing"><span /><span /><span /></span>
                   ) : (
-                    <svg viewBox="0 0 24 24" fill="none" stroke="#0D0C0A" strokeWidth="2.5" strokeLinecap="round" width="18" height="18">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" width="18" height="18">
                       <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
                     </svg>
                   )}
@@ -1341,7 +1546,7 @@ export default function Nona() {
                     return (
                       <div key={t.id} className={`task ${t.done ? "done" : ""}`} style={{ flexWrap: isEditing ? "wrap" : "nowrap" }}>
                         <div className="task-check" onClick={() => toggleTask(t.id)}>
-                          {t.done && <svg viewBox="0 0 24 24" fill="none" stroke="#0D0C0A" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" width="12" height="12"><polyline points="20 6 9 17 4 12" /></svg>}
+                          {t.done && <svg viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" width="12" height="12"><polyline points="20 6 9 17 4 12" /></svg>}
                         </div>
                         {isEditing ? (
                           <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1363,7 +1568,7 @@ export default function Nona() {
                           <>
                             {t.date && (
                               <div style={{ fontSize: 11, color: "var(--gold)", fontWeight: 600, flexShrink: 0, minWidth: 48 }}>
-                                {new Date(t.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                                {parseLocalDate(t.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
                               </div>
                             )}
                             <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => setEditingTaskId(t.id)}>
@@ -1387,6 +1592,29 @@ export default function Nona() {
               <div style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 2 }}>{profile.name || "Your profile"}</div>
                 <div style={{ fontSize: 12, color: "var(--muted)" }}>What Nona knows about your life</div>
+              </div>
+
+              <div className="card" style={{ marginBottom: 20, display: "flex", alignItems: "center", gap: 16 }}>
+                {renderAvatar(56)}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>Avatar</div>
+                  <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+                    <input type="file" id="avatar-upload" accept="image/*" style={{ display: "none" }} onChange={handleAvatarFile} />
+                    <label htmlFor="avatar-upload" className="btn-sm" style={{ cursor: "pointer" }}>Upload photo</label>
+                    {profile.avatarUrl && (
+                      <button className="btn-sm" onClick={() => setProfile(p => ({ ...p, avatarUrl: null }))}>Remove photo</button>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {AVATAR_COLORS.map(c => (
+                      <button key={c} title="Use this color" onClick={() => setProfile(p => ({ ...p, avatarColor: c }))}
+                        style={{
+                          width: 22, height: 22, borderRadius: "50%", background: c, flexShrink: 0,
+                          border: (profile.avatarColor || AVATAR_COLORS[0]) === c ? "2px solid var(--white)" : "2px solid transparent",
+                        }} />
+                    ))}
+                  </div>
+                </div>
               </div>
 
               <div className="card" style={{ marginBottom: 20 }}>
@@ -1494,6 +1722,37 @@ export default function Nona() {
                   const rule = prompt("Add filter rule — any email containing this sender name or subject will be permanently hidden:\n\nExamples: 'password change', 'Microsoft account team', 'no-reply@'")
                   if (rule?.trim()) setProfile(p => ({ ...p, emailFilters: [...(p.emailFilters || []), rule.trim()] }))
                 }}>+ Add rule</button>
+              </div>
+
+              <div style={{ marginTop: 24, marginBottom: 8 }}>
+                <div style={{ fontSize: 10, color: "var(--gold)", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>🔁 Recurring</div>
+                <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>Repeats every week on the days you pick — e.g. football training every Friday and Saturday. Shows up on the calendar and everywhere else like any task.</div>
+                {(profile.recurring || []).map(r => (
+                  <div key={r.id} className="settings-row" style={{ marginBottom: 6 }}>
+                    <div style={{ fontSize: 13, color: "var(--white)" }}>{r.text} <span style={{ color: "var(--muted)", fontSize: 11 }}>({r.days.map(d => DOW_SHORT[d]).join(", ")})</span></div>
+                    <button className="btn-sm" style={{ fontSize: 11, color: "#e87a7a" }} onClick={() => removeRecurring(r.id)}>Remove</button>
+                  </div>
+                ))}
+                <div style={{ display: "flex", gap: 6, marginTop: 6, marginBottom: 8, flexWrap: "wrap" }}>
+                  {[0, 1, 2, 3, 4, 5, 6].map(d => (
+                    <button key={d} onClick={() => setNewRecurringDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d])}
+                      style={{
+                        width: 32, height: 32, borderRadius: "50%", fontSize: 11, flexShrink: 0,
+                        border: newRecurringDays.includes(d) ? "1.5px solid var(--gold)" : "1px solid var(--border)",
+                        background: newRecurringDays.includes(d) ? "var(--gold-dim)" : "transparent",
+                        color: newRecurringDays.includes(d) ? "var(--gold)" : "var(--muted)",
+                      }}>
+                      {DOW_SHORT[d][0]}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input className="input" style={{ flex: 1 }} value={newRecurringText}
+                    onChange={e => setNewRecurringText(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addRecurring() } }}
+                    placeholder="e.g. Football training" />
+                  <button className="btn-sm" onClick={addRecurring} disabled={!newRecurringText.trim() || newRecurringDays.length === 0}>+ Add</button>
+                </div>
               </div>
 
               <div style={{ marginTop: 24 }}>

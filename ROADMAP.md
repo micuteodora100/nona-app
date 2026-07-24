@@ -44,6 +44,11 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 | ✅ Voice: live transcript editing | Already shipped — transcript is editable before it's parsed into tasks |
 | ✅ Tasks: date in front | Already shipped — date badge renders before the task text, not after |
 | ✅ Full email body reading | Already shipped — up to 3000 chars of real body (plus PDF attachment text) per email, not just a 100-150 char preview |
+| ✅ Warm light theme | Shipped 24 Jul 2026 — replaced the dark theme app-wide, see Decisions locked below |
+| ✅ Unified speak-or-type capture on Home | Shipped 24 Jul 2026 — the Home "What's on your mind?" box used to be voice-only with no typed fallback; it's now one input either typed or dictated into (mic toggles to a send button once there's text), same AI parser either way |
+| ✅ Calendar click-to-add | Shipped 24 Jul 2026 — tapping a day in the week view opens an inline quick-add scoped to that date, bypassing the AI's own date-guessing since the date is already explicit |
+| ✅ Avatar | Shipped 24 Jul 2026 — upload a photo (resized/compressed client-side, stored inline in `profile` as a data URI, no new storage infra) or fall back to a colored-initial circle; shown top-left on Home, editable in Settings |
+| ✅ Home screen restructure | Shipped 24 Jul 2026 — new order: weather widget + greeting → morning brief (was generated but never actually rendered anywhere — real gap, now fixed) → calendar → capture box → Mail / Notes & Tasks as two tappable rows (both collapsed, tap through rather than showing lists inline). Budget/Groceries placeholders removed from Home until built for real. Also fixed a real timezone bug found while testing this: date-only strings were round-tripped through UTC-aware `Date` methods (`toISOString()`, `new Date(isoString)`), which silently shifts the displayed/stored day by one for any timezone not exactly on UTC (Luxembourg included) — replaced with local-safe `parseLocalDate`/`toISODate` helpers in `pages/index.js`. |
 
 ---
 
@@ -107,7 +112,7 @@ Audited 23 Jul 2026 — everything below is confirmed genuinely not built except
 
 ## 📋 Decisions locked
 
-- Design: `#0D0C0A` black, `#E8C87A` gold, Instrument Serif + Syne
+- Design: warm light theme (24 Jul 2026, replaces the original dark theme below) — `#FBF6EE` cream background, `#2A2733` ink text, `#FF6B4A` coral accent, white cards with soft shadow, Instrument Serif + Syne. Colors are CSS custom properties (`--bg`, `--black`, `--gold`, `--white`, `--muted`, `--surface`, `--border` in `pages/index.js`'s global style block) — variable *names* were kept as-is to avoid a ~120-usage rename, but their roles shifted (e.g. `--black` is now the contrast color used on top of accent-filled buttons, not the page background). ~~Original: `#0D0C0A` black, `#E8C87A` gold~~ — superseded, kept here for history.
 - Home order: Tasks → Calendar → Mail → Budget → Groceries
 - No tab bar — single scroll, drill-down with Back button
 - Brief = bullet list of action items only, no narrative
