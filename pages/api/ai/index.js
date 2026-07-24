@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk"
 import { getServerSession } from "next-auth"
 import { getAuthOptions } from "../auth/[...nextauth]"
+import { DEFAULT_CATEGORIES } from "../../../lib/categories"
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -25,10 +26,16 @@ export default async function handler(req, res) {
   const session = await getServerSession(req, res, getAuthOptions(req))
   if (!session) return res.status(401).json({ error: "Not authenticated" })
 
-  const { type, emails, tasks, context } = req.body
+  const { type, emails, tasks, context, categories } = req.body
 
   try {
     let prompt = ""
+
+    // Categories are user-customizable (Settings) — always tag from whatever
+    // the user currently has, not a hardcoded list, so custom categories get
+    // picked up by the AI same as the defaults.
+    const cats = categories?.length ? categories : DEFAULT_CATEGORIES
+    const categoryListStr = cats.map(c => `"${c.id}" (${c.label})`).join(", ")
 
     if (type === "triage") {
       // was: 1200 chars/email — with up to 100 emails, that made the triage
@@ -85,7 +92,7 @@ Return ONLY valid JSON, no markdown, no explanation:
 {
   "urgent": [{"index": 1, "reason": "one short line — what and why"}],
   "action": [{"index": 2, "reason": "one short line — what action, by when if known"}],
-  "tasks": ["concrete task extracted from an email, phrased as something to do"],
+  "tasks": [{"text": "concrete task extracted from an email, phrased as something to do", "tag": "bills"}],
   "calendar_events": [{"text": "short event title", "date": "2026-07-03", "source_index": 1}],
   "summary": "One line: how many emails actually need attention, or 'Nothing urgent' if genuinely true."
 }
@@ -94,7 +101,7 @@ Also extract calendar_events: any email that mentions a specific date + event (b
 
 Flight bookings and e-tickets need special care: create a SEPARATE calendar event for EACH leg of the trip — one for the outbound departure date, and another for the return departure date if it's a round trip (a booking confirmation email often covers both in one email, and both must be extracted, not just the first). Use the actual flight departure date, never the date the email was sent or booked. Title each one with the route and, if visible, the flight number, e.g. "✈ LGW→LIS FR1234"; fall back to "✈ Flight to [destination]" if the flight number isn't in the text.
 
-For the tasks array: for EVERY email in urgent or action, extract at least one concrete task phrased as something to do. E.g. "Reply to Maria about contract renewal", "Pay invoice from BGL", "Confirm dentist appointment for 8 Jul". Do not leave tasks empty if there are action items.
+For the tasks array: for EVERY email in urgent or action, extract at least one concrete task phrased as something to do. E.g. "Reply to Maria about contract renewal", "Pay invoice from BGL", "Confirm dentist appointment for 8 Jul". Do not leave tasks empty if there are action items. Each task needs its own "tag" — pick the single best-fitting category id from: ${categoryListStr}. Use null only if genuinely none fit (do not default everything to the same category — a bill and a job application are never the same tag).
 
 Do not include an "fyi" bucket — if it's not worth action, don't surface it at all. Keep urgent and action arrays short — only real items, never pad them.`
     }
@@ -118,10 +125,10 @@ Rules:
 - "text": a short, specific task title (under 10 words if possible) describing what the recipient needs to DO — not a summary. E.g. "Reply to Maria about contract" not "Email from Maria about contract."
 - "description": one short sentence (under 20 words) giving context — what the email is actually about, so the task makes sense without reopening the email.
 - "date": if the email mentions any date, deadline, or appointment (even relative like "by Friday" or "next week"), resolve it to an actual date using today as reference. If genuinely no date is mentioned, use null.
-- "tag": guess "family", "work", "health", "errands", or null if unclear.
+- "tag": pick the single best-fitting category id from: ${categoryListStr}. Use null if genuinely none fit.
 
 Return ONLY valid JSON, no markdown:
-{"text": "short task title", "description": "one short sentence of context", "date": "2026-07-12" or null, "tag": "work"}`
+{"text": "short task title", "description": "one short sentence of context", "date": "2026-07-12" or null, "tag": "bills"}`
     }
 
     if (type === "parse_tasks") {
@@ -138,7 +145,7 @@ For each task:
 - Extract a clean, short task description (remove date phrases from the text itself, keep it actionable)
 - If a date is mentioned (even relative like "Thursday", "next week", "the 8th"), resolve it to an actual date using today's date as reference, and include it
 - If no date is mentioned, leave date as null
-- Guess a tag: "family", "work", "health", "errands", or null if unclear
+- Pick the single best-fitting category id for "tag" from: ${categoryListStr}. Use null if genuinely none fit.
 
 Return ONLY valid JSON, no markdown:
 {

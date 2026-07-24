@@ -3,6 +3,7 @@ import { useSession, signIn, signOut } from "next-auth/react"
 import Head from "next/head"
 import { supabase } from "../lib/supabase"
 import { subscribeToPush, unsubscribeFromPush, getPushPermissionState } from "../lib/push-client"
+import { getCategories, categoryLabel, slugifyCategoryId } from "../lib/categories"
 
 // ── helpers ──────────────────────────────────────────────────────────────
 const STORAGE_KEY = "nona_v2"
@@ -61,9 +62,10 @@ async function loadFromSupabase() {
 function guessTag(text) {
   const t = text.toLowerCase()
   if (/crèche|creche|timothée|timothee|school|swim|gym|pick.up|drop.off/.test(t)) return "family"
-  if (/job|apply|cv|interview|linkedin|nona|startup|pitch/.test(t)) return "work"
   if (/dentist|doctor|pharmacie|appointment/.test(t)) return "health"
-  if (/buy|groceries|lidl|shop/.test(t)) return "errands"
+  if (/job|apply|application|cv|interview|linkedin|recruiter/.test(t)) return "applications"
+  if (/invoice|bill|payment|refund|subscription/.test(t)) return "bills"
+  if (/buy|groceries|lidl|shop|errand/.test(t)) return "groceries"
   return null
 }
 
@@ -433,6 +435,7 @@ export default function Nona() {
           type: "triage",
           emails: listToTriage,
           context: { name: profile.name || "Teodora", child: profile.child || "Timothée" },
+          categories: getCategories(profile),
         }),
       })
       const text = await r.text()
@@ -456,11 +459,15 @@ export default function Nona() {
       d.summary = d.summary || (d.error ? null : `${emailList.length} emails loaded.`)
       setTriage(d)
       if (!d.error) saveCache("nona_triage", { triage: d, emails: emailList })
-      // Auto-add extracted tasks
+      // Auto-add extracted tasks — each carries its own AI-guessed category
+      // (defensive `typeof` check in case an older cached response or a raw-JSON
+      // fallback ever hands back plain strings instead of {text, tag} objects)
       if (d.tasks?.length) {
-        const newTasks = d.tasks.map(text => ({
-          id: String(Date.now() + Math.random()), text, done: false, tag: "work", fromEmail: true,
-        }))
+        const newTasks = d.tasks.map(item => {
+          const text = typeof item === "string" ? item : item.text
+          const tag = typeof item === "string" ? null : (item.tag || null)
+          return { id: String(Date.now() + Math.random()), text, done: false, tag, fromEmail: true }
+        })
         setTasks(prev => [...newTasks, ...prev])
       }
       // Auto-add calendar events extracted from emails
@@ -526,6 +533,7 @@ export default function Nona() {
         body: JSON.stringify({
           type: "email_to_task",
           email: { from: email.from, subject: email.subject, snippet: email.snippet || "" },
+          categories: getCategories(profile),
         }),
       })
       const d = await r.json()
@@ -535,7 +543,7 @@ export default function Nona() {
         description: d.description || email.snippet || "",
         date: d.date || null,
         done: false,
-        tag: d.tag || "work",
+        tag: d.tag || null,
         fromEmail: true,
         emailKey: dupeKey,
       }
@@ -543,7 +551,7 @@ export default function Nona() {
     } catch (e) {
       // fallback: still add something rather than fail silently
       setTasks(prev => [{
-        id: String(Date.now() + Math.random()), text: email.subject, description: email.snippet || "", date: null, done: false, tag: "work", fromEmail: true, emailKey: dupeKey,
+        id: String(Date.now() + Math.random()), text: email.subject, description: email.snippet || "", date: null, done: false, tag: null, fromEmail: true, emailKey: dupeKey,
       }, ...prev])
     }
   }
@@ -611,7 +619,7 @@ export default function Nona() {
       const r = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "parse_tasks", text }),
+        body: JSON.stringify({ type: "parse_tasks", text, categories: getCategories(profile) }),
       })
       const d = await r.json()
       if (d.tasks && Array.isArray(d.tasks)) {
@@ -832,7 +840,7 @@ export default function Nona() {
     setTasks(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t))
   }
 
-  const TAG_OPTIONS = ["family", "work", "health", "errands"]
+  const categories = getCategories(profile)
 
   const filteredTasks = tasks.filter(t => {
     if (t.isEvent) return false // scheduled events live in the calendar, not the Tasks list
@@ -851,9 +859,15 @@ export default function Nona() {
         if (!groups[key]) groups[key] = []
         groups[key].push(t)
       })
-      const order = ["family", "work", "health", "errands", "untagged"]
+      // Known categories first (in the user's own order), then any leftover tag
+      // values that don't match a current category (e.g. from a category since
+      // renamed or deleted) so those tasks stay visible instead of disappearing,
+      // then untagged last.
+      const knownIds = categories.map(c => c.id)
+      const orphanIds = Object.keys(groups).filter(k => k !== "untagged" && !knownIds.includes(k))
+      const order = [...knownIds, ...orphanIds, "untagged"]
       return order.filter(k => groups[k]?.length).map(k => ({
-        label: k === "untagged" ? "No tag" : k.charAt(0).toUpperCase() + k.slice(1),
+        label: k === "untagged" ? "No tag" : categoryLabel(k, categories),
         items: groups[k],
       }))
     }
@@ -1514,9 +1528,9 @@ export default function Nona() {
               </div>
 
               <div className="chips">
-                {["all", "today", "family", "work", "done"].map(f => (
+                {[["all", "All"], ["today", "Today"], ...categories.map(c => [c.id, c.label]), ["done", "Done"]].map(([f, label]) => (
                   <button key={f} className={`chip ${taskFilter === f ? "on" : ""}`} onClick={() => setTaskFilter(f)}>
-                    {f === "all" ? "All" : f === "today" ? "Today" : f === "family" ? "Family" : f === "work" ? "Work" : "Done"}
+                    {label}
                   </button>
                 ))}
               </div>
@@ -1559,7 +1573,7 @@ export default function Nona() {
                               <select className="input" style={{ fontSize: 12, padding: "6px 8px", width: "auto" }}
                                 value={t.tag || ""} onChange={e => updateTask(t.id, { tag: e.target.value || null })}>
                                 <option value="">No tag</option>
-                                {TAG_OPTIONS.map(tag => <option key={tag} value={tag}>{tag}</option>)}
+                                {categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
                               </select>
                               <button className="btn-sm" onClick={() => setEditingTaskId(null)}>Done</button>
                             </div>
@@ -1576,7 +1590,7 @@ export default function Nona() {
                               {t.description && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{t.description}</div>}
                             </div>
                             {t.fromEmail && <span className="task-email-badge">📧</span>}
-                            {t.tag && <span className="task-tag">{t.tag}</span>}
+                            {t.tag && <span className="task-tag">{categoryLabel(t.tag, categories)}</span>}
                             <button className="task-del" onClick={() => deleteTask(t.id)}>×</button>
                           </>
                         )}
@@ -1708,6 +1722,32 @@ export default function Nona() {
                   <button className="btn-sm" onClick={() => signIn("microsoft")}>Connect →</button>
                 </div>
               )}
+
+              <div style={{ marginTop: 24, marginBottom: 8 }}>
+                <div style={{ fontSize: 10, color: "var(--gold)", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>🏷️ Task categories</div>
+                <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>Used to group tasks and to auto-tag ones pulled from email. Tap a name to rename it — existing tasks keep up automatically.</div>
+                {categories.map(c => (
+                  <div key={c.id} className="settings-row" style={{ marginBottom: 6 }}>
+                    <div style={{ fontSize: 13, color: "var(--white)", cursor: "pointer" }} onClick={() => {
+                      const label = prompt("Rename category:", c.label)
+                      if (label?.trim()) setProfile(p => ({ ...p, categories: getCategories(p).map(x => x.id === c.id ? { ...x, label: label.trim() } : x) }))
+                    }}>{c.label}</div>
+                    <button className="btn-sm" style={{ fontSize: 11, color: "#e87a7a" }} onClick={() => {
+                      if (confirm(`Remove "${c.label}"? Tasks already tagged with it stay as they are, just ungrouped.`)) {
+                        setProfile(p => ({ ...p, categories: getCategories(p).filter(x => x.id !== c.id) }))
+                      }
+                    }}>Remove</button>
+                  </div>
+                ))}
+                <button className="btn-sm" style={{ marginTop: 6 }} onClick={() => {
+                  const label = prompt("New category name:")
+                  if (label?.trim()) setProfile(p => {
+                    const current = getCategories(p)
+                    const id = slugifyCategoryId(label.trim(), current.map(x => x.id))
+                    return { ...p, categories: [...current, { id, label: label.trim() }] }
+                  })
+                }}>+ Add category</button>
+              </div>
 
               <div style={{ marginTop: 24, marginBottom: 8 }}>
                 <div style={{ fontSize: 10, color: "var(--gold)", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>🚫 Email filter rules</div>
