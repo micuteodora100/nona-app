@@ -1,6 +1,6 @@
 # Nona — Product Roadmap
 
-Last updated: 23 July 2026
+Last updated: 24 July 2026
 
 T-shirt sizes: XS = half day | S = 1-2 days | M = 3-5 days | L = 1-2 weeks | XL = 3-4 weeks
 Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
@@ -50,6 +50,7 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 | ✅ Avatar | Shipped 24 Jul 2026 — upload a photo (resized/compressed client-side, stored inline in `profile` as a data URI, no new storage infra) or fall back to a colored-initial circle; shown top-left on Home, editable in Settings |
 | ✅ Home screen restructure | Shipped 24 Jul 2026 — new order: weather widget + greeting → morning brief (was generated but never actually rendered anywhere — real gap, now fixed) → calendar → capture box → Mail / Notes & Tasks as two tappable rows (both collapsed, tap through rather than showing lists inline). Budget/Groceries placeholders removed from Home until built for real. Also fixed a real timezone bug found while testing this: date-only strings were round-tripped through UTC-aware `Date` methods (`toISOString()`, `new Date(isoString)`), which silently shifts the displayed/stored day by one for any timezone not exactly on UTC (Luxembourg included) — replaced with local-safe `parseLocalDate`/`toISODate` helpers in `pages/index.js`. |
 | ✅ Task categorisation | Shipped 24 Jul 2026 — root cause was that batch email-triage tasks were hardcoded to `tag: "work"` client-side (`pages/index.js`), never even asked the AI to categorize per-item, unlike single email→task conversion which already did. Replaced the fixed family/work/health/errands taxonomy with a user-customizable category list (`lib/categories.js`, default: Applications, Bills & money, Groceries & errands, Family, Health) editable in Settings — add/rename/remove, with stable ids so renames propagate to existing tasks and removed categories leave old tasks visible (grouped under a fallback label) instead of disappearing. All three AI tagging paths (triage, email→task, free-text parse) now receive the user's actual current category list and tag against it, so custom categories get picked up automatically. |
+| ✅ Task cards restyled as sticky notes | Shipped 24 Jul 2026 — each category now carries a pastel `color` (`lib/categories.js`), and task cards render as solid-color notes with a drop shadow and a small stable per-item tilt (hashed from the task id, so it doesn't jitter on re-render) instead of a flat white-bordered list — categories are visually distinguishable at a glance, not just by a small badge. Old categories saved before `color` existed get backfilled automatically (matched by id to the current defaults, or a palette pick) so nothing collapses to one flat color. Also fixed low-contrast coral-on-pale-coral text (Mail tab's connected-account pills, selected filter/group-by chips, category badges) that read as washed-out pink and was hard to read — replaced with solid coral fill + dark ink text (or a neutral dark overlay for badges sitting on top of note colors). |
 
 ---
 

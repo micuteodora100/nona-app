@@ -3,7 +3,7 @@ import { useSession, signIn, signOut } from "next-auth/react"
 import Head from "next/head"
 import { supabase } from "../lib/supabase"
 import { subscribeToPush, unsubscribeFromPush, getPushPermissionState } from "../lib/push-client"
-import { getCategories, categoryLabel, slugifyCategoryId } from "../lib/categories"
+import { getCategories, categoryLabel, slugifyCategoryId, noteColor, nextNoteColor } from "../lib/categories"
 
 // ── helpers ──────────────────────────────────────────────────────────────
 const STORAGE_KEY = "nona_v2"
@@ -67,6 +67,15 @@ function guessTag(text) {
   if (/invoice|bill|payment|refund|subscription/.test(t)) return "bills"
   if (/buy|groceries|lidl|shop|errand/.test(t)) return "groceries"
   return null
+}
+
+// Small stable pseudo-random tilt per task id (±1.5deg) so sticky notes look
+// pinned to a board rather than perfectly aligned — same task always gets
+// the same tilt across re-renders since it's derived from the id, not Math.random().
+function noteRotation(id) {
+  let hash = 0
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0
+  return ((Math.abs(hash) % 100) / 100 - 0.5) * 3
 }
 
 function weatherIcon(code) {
@@ -973,25 +982,31 @@ export default function Nona() {
         .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
         .chip { background: var(--surface); border: 1px solid var(--border); border-radius: 20px;
           color: var(--muted); font-size: 12px; padding: 6px 12px; transition: all 0.15s; }
-        .chip.on { background: var(--gold-dim); border-color: var(--gold-mid); color: var(--gold); }
+        .chip.on { background: var(--gold); border-color: var(--gold); color: var(--white); font-weight: 600; }
 
-        /* Task */
-        .task { display: flex; align-items: flex-start; gap: 12px; background: var(--surface);
-          border: 1px solid var(--border); border-radius: 12px; padding: 13px 14px; margin-bottom: 8px; }
-        .task.done { opacity: 0.4; }
-        .task-check { width: 20px; height: 20px; border: 1.5px solid var(--border); border-radius: 50%;
+        /* Task — styled like a sticky note pinned to a board: solid color
+           per category (see lib/categories.js), a slight per-item rotation
+           and a real drop shadow instead of a flat bordered card, so each
+           one reads as a distinct physical note rather than blending into
+           one long grey list. */
+        .task { display: flex; align-items: flex-start; gap: 12px; border: none;
+          border-radius: 6px; padding: 14px 14px 16px; margin-bottom: 16px;
+          box-shadow: 0 3px 6px rgba(42,39,51,0.14), 0 1px 3px rgba(42,39,51,0.08);
+          transition: opacity 0.2s, transform 0.15s; }
+        .task.done { opacity: 0.55; }
+        .task-check { width: 20px; height: 20px; border: 1.5px solid rgba(42,39,51,0.28); border-radius: 50%;
           flex-shrink: 0; cursor: pointer; margin-top: 1px; display: flex; align-items: center;
-          justify-content: center; transition: all 0.2s; }
+          justify-content: center; transition: all 0.2s; background: rgba(255,255,255,0.4); }
         .task.done .task-check { background: var(--gold); border-color: var(--gold); }
         .task-text { flex: 1; font-size: 14px; color: var(--white); line-height: 1.4; }
         .task.done .task-text { text-decoration: line-through; color: var(--muted); }
-        .task-tag { font-size: 10px; color: var(--gold); background: var(--gold-dim);
+        .task-tag { font-size: 10px; color: var(--white); background: rgba(42,39,51,0.1);
           border-radius: 4px; padding: 2px 6px; font-weight: 600; letter-spacing: 0.06em;
           text-transform: uppercase; white-space: nowrap; }
-        .task-email-badge { font-size: 9px; color: var(--muted); background: var(--surface);
-          border-radius: 4px; padding: 2px 5px; border: 1px solid var(--border); }
-        .task-del { color: var(--muted); padding: 2px; font-size: 18px; line-height: 1;
-          opacity: 0.5; transition: opacity 0.2s; }
+        .task-email-badge { font-size: 9px; color: var(--white); background: rgba(255,255,255,0.55);
+          border-radius: 4px; padding: 2px 5px; border: 1px solid rgba(42,39,51,0.1); }
+        .task-del { color: var(--white); opacity: 0.4; padding: 2px; font-size: 18px; line-height: 1;
+          transition: opacity 0.2s; }
         .task-del:hover { opacity: 1; }
 
         /* Header */
@@ -1354,16 +1369,16 @@ export default function Nona() {
               {session && (
                 <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
                   <span style={{
-                    fontSize: 11, padding: "5px 10px", borderRadius: 20, border: "1px solid var(--border)",
-                    background: session.providers?.google ? "var(--gold-dim)" : "transparent",
-                    color: session.providers?.google ? "var(--gold)" : "var(--muted)",
+                    fontSize: 11, fontWeight: 600, padding: "5px 10px", borderRadius: 20, border: "1px solid var(--border)",
+                    background: session.providers?.google ? "var(--gold)" : "transparent",
+                    color: session.providers?.google ? "var(--white)" : "var(--muted)",
                   }}>
                     {session.providers?.google ? `✓ Gmail — ${session.providers.google.email}` : "✕ Gmail not connected"}
                   </span>
                   <span style={{
-                    fontSize: 11, padding: "5px 10px", borderRadius: 20, border: "1px solid var(--border)",
-                    background: session.providers?.microsoft ? "var(--gold-dim)" : "transparent",
-                    color: session.providers?.microsoft ? "var(--gold)" : "var(--muted)",
+                    fontSize: 11, fontWeight: 600, padding: "5px 10px", borderRadius: 20, border: "1px solid var(--border)",
+                    background: session.providers?.microsoft ? "var(--gold)" : "transparent",
+                    color: session.providers?.microsoft ? "var(--white)" : "var(--muted)",
                   }}>
                     {session.providers?.microsoft ? `✓ Outlook — ${session.providers.microsoft.email}` : "✕ Outlook not connected"}
                   </span>
@@ -1558,7 +1573,11 @@ export default function Nona() {
                   {group.items.map(t => {
                     const isEditing = editingTaskId === t.id
                     return (
-                      <div key={t.id} className={`task ${t.done ? "done" : ""}`} style={{ flexWrap: isEditing ? "wrap" : "nowrap" }}>
+                      <div key={t.id} className={`task ${t.done ? "done" : ""}`} style={{
+                        flexWrap: isEditing ? "wrap" : "nowrap",
+                        background: noteColor(t.tag, categories),
+                        transform: isEditing ? "none" : `rotate(${noteRotation(t.id)}deg)`,
+                      }}>
                         <div className="task-check" onClick={() => toggleTask(t.id)}>
                           {t.done && <svg viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" width="12" height="12"><polyline points="20 6 9 17 4 12" /></svg>}
                         </div>
@@ -1744,7 +1763,8 @@ export default function Nona() {
                   if (label?.trim()) setProfile(p => {
                     const current = getCategories(p)
                     const id = slugifyCategoryId(label.trim(), current.map(x => x.id))
-                    return { ...p, categories: [...current, { id, label: label.trim() }] }
+                    const color = nextNoteColor(current)
+                    return { ...p, categories: [...current, { id, label: label.trim(), color }] }
                   })
                 }}>+ Add category</button>
               </div>
