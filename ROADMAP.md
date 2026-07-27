@@ -1,6 +1,6 @@
 # Nona — Product Roadmap
 
-Last updated: 24 July 2026
+Last updated: 27 July 2026
 
 T-shirt sizes: XS = half day | S = 1-2 days | M = 3-5 days | L = 1-2 weeks | XL = 3-4 weeks
 Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
@@ -54,11 +54,13 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 
 ---
 
-## 🔴 P0 — Fix now
+## 🔴 P0 — Fix now (blocking: sharing Nona with anyone else)
 
 | Size | Feature | Notes |
 |------|---------|-------|
 | ✅ | **Outlook connection** | Done — Microsoft Graph API via proper OAuth 2.0, using a direct Azure app registration + a custom NextAuth provider (`pages/api/auth/[...nextauth].js`), not through Supabase's own Azure provider. Personal Microsoft accounts only (`/consumers` endpoint), `Mail.Read` scope. `MICROSOFT_CLIENT_ID`/`MICROSOFT_CLIENT_SECRET` confirmed working locally 23 Jul 2026 — make sure both are also set in Vercel. |
+| M | **Security hardening before sharing** | Raised 23 Jul 2026, promoted to P0 27 Jul 2026: (1) the RLS policy on `nona_user_data` (`user_id LIKE '%@%'`) would let any authenticated Supabase user read/write any other user's row if ever queried directly with the publishable key — currently harmless only because the app always proxies through the server route with the service-role key, but it's a latent hole, not a real boundary. Needs a real per-user RLS policy (`auth.uid() = user_id` once the identity model below is unified). (2) `ANTHROPIC_API_KEY` is one shared key — every user's AI usage bills against the same Anthropic account with no per-user rate/cost limit, so one sharee could burn the whole budget. Needs basic per-user usage tracking/limiting before opening access up. |
+| L | **Multi-user login — unify the identity model** | Raised 23 Jul 2026, promoted to P0 27 Jul 2026: this is the actual blocker on letting other people in. Supabase Auth email/password login works end-to-end (fixed 23 Jul 2026), but task/data sync is still keyed off whichever OAuth email NextAuth considers "current," not the Supabase Auth identity someone actually signed in with — a new person who creates an account but hasn't yet connected Gmail/Outlook has no working sync at all. Needs: sync (`nona_user_data`, `oauth_tokens`) keyed off Supabase Auth `user.id` instead of OAuth email; the `/login` "Create account" flow tested end-to-end for a genuinely second person, not just Teodora; then confirm the RLS fix above actually isolates their data once this is live. |
 
 ---
 
@@ -67,8 +69,6 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 | Size | Feature | Notes |
 |------|---------|-------|
 | S | **AI context survey on first open** | 5 questions + scan 90 days emails → build personal context profile. Makes brief and triage more personalised. |
-| L | **Multi-user readiness — not there yet** | Raised 23 Jul 2026: can other people use this now? Short answer: not safely yet, even though today's fixes made the mechanics *work*. Gaps: (1) `nona_user_data`/task sync is keyed off whichever OAuth email NextAuth considers "current," not off the Supabase Auth identity someone actually logged in with — a new person who signs into the app but hasn't yet connected Gmail/Outlook has no working sync at all; (2) the RLS policy on `nona_user_data` (`user_id LIKE '%@%'`) would let any authenticated Supabase user read/write any other user's row if ever queried directly with the publishable key — currently harmless only because the app always proxies through the server route with the service-role key, but it's a latent hole, not a real boundary; (3) `ANTHROPIC_API_KEY` is one shared key — every user's AI usage bills against the same Anthropic account. Fine for you + one trusted person who understands this; not ready to open up beyond that. |
-| XL | **Supabase auth — proper login** | Email + password per user, replacing the shared `APP_PASSWORD`. The login page and cookie-based session now actually work end-to-end (fixed 23 Jul 2026), but see "Multi-user readiness" above — the identity model underneath still isn't unified enough to call this fully done. |
 
 ---
 
