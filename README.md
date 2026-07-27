@@ -1,11 +1,36 @@
-# Nona — Setup Guide
+# Nona — AI-powered family operating system
 
-## What you're deploying
-A Next.js app that runs on Vercel (free tier). Your emails are read live via OAuth — never stored. The Claude API generates your brief and triage on the fly.
+Nona is a personal assistant designed to reduce the mental load of running a household. It brings together tasks, schedules, email, and family logistics into one daily view, using AI to surface what needs attention rather than requiring users to manually organize everything.
+
+**Status:** MVP in active development.
+
+Built independently from product concept through implementation, using Next.js, Supabase, Claude, and Vercel.
+
+## Screenshots
+
+<!-- TODO: add screenshots — e.g. daily brief, task list, email triage -->
+<!-- ![Daily brief](docs/screenshot-daily-brief.png) -->
+<!-- ![Tasks](docs/screenshot-tasks.png) -->
+
+## What Nona does
+
+**Daily brief → tasks → calendar → email triage → household logistics → proactive reminders**
+
+- **Daily brief** — a single view of what actually needs attention today, generated fresh each morning
+- **Tasks** — AI-categorized and prioritized, not just a flat to-do list
+- **Calendar** — flight/e-ticket detection and scheduling pulled in automatically
+- **Email triage** — Gmail and Outlook inboxes summarized and converted into actionable tasks, read-only
+- **Household logistics** — recurring tasks and family-specific categories, not generic productivity buckets
+- **Proactive reminders** — push notifications surface what matters without the user having to check in
 
 ---
 
-## Step 1 — Push to GitHub (5 min)
+## Setup Guide
+
+### What you're deploying
+A Next.js app that runs on Vercel (free tier). Your emails are read live via OAuth — never stored. The Claude API generates your brief and triage on the fly.
+
+### Step 1 — Push to GitHub (5 min)
 
 1. Go to github.com → New repository → name it `nona-app` → Create
 2. In terminal (or GitHub Desktop):
@@ -18,18 +43,14 @@ git remote add origin https://github.com/YOUR_USERNAME/nona-app.git
 git push -u origin main
 ```
 
----
-
-## Step 2 — Deploy to Vercel (3 min)
+### Step 2 — Deploy to Vercel (3 min)
 
 1. Go to vercel.com → Sign up with GitHub
 2. New Project → Import `nona-app`
 3. Framework: Next.js (auto-detected)
 4. **Don't deploy yet** — add env vars first (Step 4)
 
----
-
-## Step 3A — Google Cloud (Gmail OAuth) — 15 min
+### Step 3A — Google Cloud (Gmail OAuth) — 15 min
 
 1. Go to console.cloud.google.com
 2. New Project → name it "Nona"
@@ -46,17 +67,13 @@ git push -u origin main
    - Also add: `http://localhost:3000/api/auth/callback/google`
 6. Copy **Client ID** and **Client Secret**
 
----
-
-## Step 3B — Outlook (IMAP, no Azure needed) — 2 min
+### Step 3B — Outlook (IMAP, no Azure needed) — 2 min
 
 > No Azure, no OAuth, no app registration. Nona connects directly to your Outlook inbox via IMAP.
 
 Nothing to set up here — just add your credentials in Step 4 below.
 
----
-
-## Step 4 — Add environment variables to Vercel
+### Step 4 — Add environment variables to Vercel
 
 In your Vercel project → Settings → Environment Variables, add:
 
@@ -72,9 +89,7 @@ In your Vercel project → Settings → Environment Variables, add:
 
 Then: **Deploy** in Vercel.
 
----
-
-## Step 5 — Add to your Android home screen
+### Step 5 — Add to your Android home screen
 
 1. Open your Vercel URL in **Chrome** (must be Chrome for PWA install)
 2. Tap the **three-dot menu** (top right)
@@ -83,9 +98,7 @@ Then: **Deploy** in Vercel.
 
 It opens full-screen, no browser bar, like a native app. Chrome may also show a bottom install banner automatically — tap that if it appears.
 
----
-
-## Costs
+### Costs
 
 | Service | Cost |
 |---------|------|
@@ -94,9 +107,7 @@ It opens full-screen, no browser bar, like a native app. Chrome may also show a 
 | Microsoft Azure | Free (personal accounts) |
 | Anthropic API | ~$0.01–0.05 per brief/triage session |
 
----
-
-## Local development
+### Local development
 
 ```
 cp .env.example .env.local
@@ -106,9 +117,7 @@ npm run dev
 # open http://localhost:3000
 ```
 
----
-
-## What Nona does with your emails
+### Email handling
 
 - Reads unread emails from the last 48 hours via OAuth
 - Sends subject lines and previews to Claude for triage
