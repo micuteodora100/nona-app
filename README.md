@@ -84,7 +84,7 @@ In your Vercel project → Settings → Environment Variables, add:
 | `ANTHROPIC_API_KEY` | Your Anthropic API key from console.anthropic.com |
 | `GOOGLE_CLIENT_ID` | From Step 3A |
 | `GOOGLE_CLIENT_SECRET` | From Step 3A |
-| `OUTLOOK_EMAIL` | `teodoramicu@outlook.com` |
+| `OUTLOOK_EMAIL` | `your@outlook.com` |
 | `OUTLOOK_PASSWORD` | Your Outlook password |
 
 Then: **Deploy** in Vercel.
