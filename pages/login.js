@@ -19,7 +19,7 @@ export default function Login() {
 
     // Check if already logged in
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) router.push("/")
+      if (session) router.push("/app")
     })
   }, [])
 
@@ -39,7 +39,7 @@ export default function Login() {
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password })
         if (error) throw error
-        router.push("/")
+        router.push("/app")
       }
     } catch (err) {
       setError(err.message)

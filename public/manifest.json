@@ -2,7 +2,7 @@
   "name": "Nona",
   "short_name": "Nona",
   "description": "Your personal AI",
-  "start_url": "/",
+  "start_url": "/app",
   "display": "standalone",
   "background_color": "#FBF6EE",
   "theme_color": "#FBF6EE",

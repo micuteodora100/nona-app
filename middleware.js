@@ -16,6 +16,12 @@ async function verifyAppPassword(token, secret) {
 export async function middleware(req) {
   const { pathname } = req.nextUrl
 
+  // The public marketing landing page — exact match only, so this doesn't
+  // accidentally allow every path through (everything starts with "/").
+  if (pathname === "/") {
+    return NextResponse.next()
+  }
+
   // Always allow these paths
   const allowList = [
     "/gate",

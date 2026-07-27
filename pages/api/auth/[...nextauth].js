@@ -91,7 +91,7 @@ export function getAuthOptions(req) {
       },
     },
     pages: {
-      signIn: "/",
+      signIn: "/app",
     },
     secret: process.env.NEXTAUTH_SECRET,
   }

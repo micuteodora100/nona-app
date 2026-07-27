@@ -20,7 +20,7 @@ export default function Gate() {
         body: JSON.stringify({ password }),
       })
       if (r.ok) {
-        router.push("/")
+        router.push("/app")
       } else {
         const d = await r.json()
         setError(d.error || "Wrong password")
