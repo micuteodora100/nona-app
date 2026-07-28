@@ -92,11 +92,10 @@ Audited 23 Jul 2026 — everything below is confirmed genuinely not built except
 
 | Size | Feature | Notes |
 |------|---------|-------|
-| M | **Waiting for replies tracker** | Scans sent Gmail, finds threads with no reply after 5 days. Important for job search but deprioritised vs other P1 items. |
-| S | **Google Calendar integration** | Show real Google Calendar appointments in week view alongside tasks |
+| M | **Waiting for replies tracker** | Scans sent Gmail, finds threads with no reply after 5 days. Queued as an overnight routine, 28→29 Jul 2026. |
+| S | **Google Calendar integration** | Show real Google Calendar appointments in week view alongside tasks. Queued as an overnight routine, 28→29 Jul 2026. |
 | M | **Document expiry reminders** | Passport, driving licence, residence permit, contrôle technique. One-time setup, reminds 6 weeks before. |
-| S | **Crèche/school email parsing** | Detect crèche/school emails, extract dates/requirements/payments into tasks |
-| M | **Morning brief push notification at 7am** | Partially built: subscribe/unsubscribe + service worker (`lib/push-client.js`, `public/sw.js`, `pages/api/push/subscribe.js`) and encrypted-token storage for cron access (`lib/tokens.js`, `oauth_tokens` table) all already exist. What's still missing: the actual scheduled trigger — no Vercel Cron config or `/api/cron/*` route exists yet to fire at 7am, generate the brief, and call the push send. |
+| M | **Morning brief push notification at 7am** | Partially built: subscribe/unsubscribe + service worker (`lib/push-client.js`, `public/sw.js`, `pages/api/push/subscribe.js`) and encrypted-token storage for cron access (`lib/tokens.js`, `oauth_tokens` table) all already exist. What's still missing: the actual scheduled trigger — no Vercel Cron config or `/api/cron/*` route exists yet to fire at 7am, generate the brief, and call the push send. Queued as an overnight routine, 28→29 Jul 2026. |
 | L | **BIL connection** | PSD2 via Nordigen/GoCardless. Read-only. |
 | L | **Revolut connection** | Same PSD2 approach. Transactions, balance, categories. |
 | M | **Amazon spend tracking** | Parse Amazon order confirmation emails — item, price, delivery date. No API needed. |
