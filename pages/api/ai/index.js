@@ -158,7 +158,7 @@ Text: "${rawText}"
 
 For each task:
 - Extract a clean, short task description (remove date phrases from the text itself, keep it actionable)
-- If a date is mentioned (even relative like "Thursday", "next week", "the 8th"), resolve it to an actual date using today's date as reference, and include it
+- If a date is mentioned (even relative like "tomorrow", "Thursday", "next week", "the 8th"), resolve it to an actual date using today's date as reference, and include it
 - If no date is mentioned, leave date as null
 - Pick the single best-fitting category id for "tag" from: ${categoryListStr}. Use null if genuinely none fit.
 

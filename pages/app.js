@@ -315,18 +315,55 @@ export default function Nona() {
     }
   }, [tasks, profile, onboarded, supabaseUser])
 
+  // The 2s debounce above can get cancelled by a quick reload/navigation
+  // before it ever fires — closing the tab right after adding a task used to
+  // mean that task never reached the cloud at all. Flush immediately whenever
+  // the tab is hidden or closed so a debounced-away change isn't lost.
+  useEffect(() => {
+    function flushPendingSync() {
+      if (!onboarded || !supabaseUser) return
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tasks, profile, handledEmails: [...handledEmails] }),
+        keepalive: true, // lets the request complete even as the page unloads
+      }).catch(() => {})
+    }
+    function onVisibilityChange() {
+      if (document.visibilityState === 'hidden') flushPendingSync()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('pagehide', flushPendingSync)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('pagehide', flushPendingSync)
+    }
+  }, [tasks, profile, handledEmails, onboarded, supabaseUser])
+
   // Load from Supabase when logged in (cross-device sync) — keyed off
   // supabaseUser, not the NextAuth session (see comment above the save effect).
+  // Merges rather than replaces: a task added locally that hasn't synced yet
+  // (e.g. added moments before this fetch resolves) must never be wiped out
+  // by an older cloud snapshot — that was a real data-loss bug, not
+  // theoretical. Cloud is still authoritative for anything it already has.
   useEffect(() => {
     if (supabaseUser && onboarded) {
       loadFromSupabase().then(data => {
         if (data) {
-          // Supabase data takes precedence over localStorage for cross-device sync
-          if (data.tasks?.length > 0) setTasks(data.tasks)
+          if (data.tasks) {
+            setTasks(prev => {
+              const cloudIds = new Set(data.tasks.map(t => t.id))
+              const localOnly = prev.filter(t => !cloudIds.has(t.id))
+              return [...localOnly, ...data.tasks]
+            })
+          }
           if (data.profile?.name) setProfile(data.profile)
           if (data.handled_emails?.length > 0) {
-            setHandledEmails(new Set(data.handled_emails))
-            try { localStorage.setItem("nona_handled_emails", JSON.stringify(data.handled_emails)) } catch {}
+            setHandledEmails(prev => {
+              const merged = new Set([...prev, ...data.handled_emails])
+              try { localStorage.setItem("nona_handled_emails", JSON.stringify([...merged])) } catch {}
+              return merged
+            })
           }
         }
       })
