@@ -76,13 +76,14 @@ function guessTag(text) {
   return null
 }
 
-// Small stable pseudo-random tilt per task id (±1.5deg) so sticky notes look
+// Small stable pseudo-random tilt per task id (±0.8deg) so sticky notes look
 // pinned to a board rather than perfectly aligned — same task always gets
 // the same tilt across re-renders since it's derived from the id, not Math.random().
+// Kept subtle (was ±1.5deg) so grouped lists read as organized, not scattered.
 function noteRotation(id) {
   let hash = 0
   for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0
-  return ((Math.abs(hash) % 100) / 100 - 0.5) * 3
+  return ((Math.abs(hash) % 100) / 100 - 0.5) * 1.6
 }
 
 function weatherIcon(code) {
@@ -715,7 +716,7 @@ export default function Nona() {
   const [voiceTranscript, setVoiceTranscript] = useState("") // shared draft text — filled by typing or by speech recognition
   const [voiceStatus, setVoiceStatus] = useState("") // "listening" | "thinking" | "" | an error message to show as placeholder
   const recognitionRef = { current: null }
-  const [taskGroupBy, setTaskGroupBy] = useState("date") // date | tag | none
+  const [taskGroupBy, setTaskGroupBy] = useState("tag") // date | tag | none — defaults to grouped-by-category so tasks read as titled sections (Work, Family, ...) instead of one long mixed list
   const [editingTaskId, setEditingTaskId] = useState(null)
   const [addingForDate, setAddingForDate] = useState(null) // ISO date of the calendar day currently showing its quick-add row
   const [dateTaskInput, setDateTaskInput] = useState("")
@@ -1107,8 +1108,8 @@ export default function Nona() {
            one reads as a distinct physical note rather than blending into
            one long grey list. */
         .task { display: flex; align-items: flex-start; gap: 12px; border: none;
-          border-radius: 6px; padding: 14px 14px 16px; margin-bottom: 16px;
-          box-shadow: 0 3px 6px rgba(42,39,51,0.14), 0 1px 3px rgba(42,39,51,0.08);
+          border-radius: 6px; padding: 10px 12px 11px; margin-bottom: 8px;
+          box-shadow: 0 2px 4px rgba(42,39,51,0.12), 0 1px 2px rgba(42,39,51,0.07);
           transition: opacity 0.2s, transform 0.15s; }
         .task.done { opacity: 0.55; }
         .task-check { width: 20px; height: 20px; border: 1.5px solid rgba(42,39,51,0.28); border-radius: 50%;
@@ -1286,106 +1287,9 @@ export default function Nona() {
                 )}
               </div>
 
-              {/* Morning brief — everything that needs attention today */}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                <span className="label" style={{ marginBottom: 0 }}>☀️ Today</span>
-                <button onClick={generateBrief} disabled={briefLoading} style={{ fontSize: 11, color: "var(--muted)" }}>{briefLoading ? "…" : "↺ Refresh"}</button>
-              </div>
-              <div className="card" style={{ marginBottom: 20 }}>
-                {briefLoading ? (
-                  <div style={{ padding: "6px 0", fontSize: 13, color: "var(--muted)" }}>Getting your day together…</div>
-                ) : brief ? (
-                  <div style={{ fontSize: 14, lineHeight: 1.7, color: "var(--white)" }}>
-                    {brief.split("\n").map((line, i) => {
-                      const trimmed = line.trim()
-                      if (!trimmed) return <div key={i} style={{ height: 8 }} />
-                      const isHeader = !trimmed.startsWith("•")
-                      return (
-                        <div key={i} style={isHeader
-                          ? { fontSize: 11, fontWeight: 700, color: "var(--gold)", textTransform: "uppercase", letterSpacing: "0.06em", marginTop: i === 0 ? 0 : 10, marginBottom: 2 }
-                          : {}
-                        }>
-                          {trimmed}
-                        </div>
-                      )
-                    })}
-                  </div>
-                ) : (
-                  <div style={{ padding: "6px 0", fontSize: 13, color: "var(--muted)" }}>Nothing loaded yet.</div>
-                )}
-              </div>
-
-              {/* Week calendar */}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                <span className="label" style={{ marginBottom: 0 }}>📅 {getWeekLabel(weekOffset)}</span>
-                <div style={{ display: "flex", gap: 14 }}>
-                  <button onClick={() => setWeekOffset(weekOffset - 1)} style={{ color: "var(--muted)", fontSize: 14 }}>‹</button>
-                  <button onClick={() => setWeekOffset(weekOffset + 1)} style={{ color: "var(--muted)", fontSize: 14 }}>›</button>
-                </div>
-              </div>
-              <div className="card" style={{ marginBottom: 20 }}>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
-                  {getWeekDays(weekOffset).map(d => (
-                    <button key={d.iso}
-                      onClick={() => { setAddingForDate(addingForDate === d.iso ? null : d.iso); setDateTaskInput("") }}
-                      style={{
-                        textAlign: "center", padding: "3px 0 1px", borderRadius: 8,
-                        background: addingForDate === d.iso ? "var(--gold-dim)" : "transparent",
-                      }}
-                    >
-                      <div style={{ fontSize: 9, color: "var(--muted)", marginBottom: 6 }}>{d.label}</div>
-                      <div style={{
-                        width: 26, height: 26, margin: "0 auto", borderRadius: "50%",
-                        display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11,
-                        background: d.isToday ? "var(--gold-dim)" : "transparent",
-                        border: d.isToday ? "1px solid var(--gold)" : addingForDate === d.iso ? "1px solid var(--gold-mid)" : "none",
-                        color: d.isToday ? "var(--gold)" : "var(--white)",
-                        fontWeight: d.isToday ? 600 : 400,
-                      }}>{d.num}</div>
-                      {d.tasks.length > 0 && (
-                        <div style={{ width: 4, height: 4, borderRadius: "50%", background: d.isToday ? "var(--gold)" : "rgba(255,107,74,0.5)", margin: "5px auto 0" }} />
-                      )}
-                    </button>
-                  ))}
-                </div>
-
-                {addingForDate && (
-                  <div style={{ marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 12, display: "flex", gap: 8, alignItems: "center" }}>
-                    <input
-                      className="input"
-                      style={{ flex: 1, padding: "9px 12px", fontSize: 13 }}
-                      value={dateTaskInput}
-                      onChange={e => setDateTaskInput(e.target.value)}
-                      onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); submitDateTask() } }}
-                      placeholder={`Add to ${formatDateShort(addingForDate)}…`}
-                      autoFocus
-                    />
-                    <button onClick={submitDateTask} style={{ background: "var(--gold)", border: "none", borderRadius: 10, width: 36, height: 36, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" width="14" height="14">
-                        <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-                      </svg>
-                    </button>
-                    <button onClick={() => { setAddingForDate(null); setDateTaskInput("") }} style={{ color: "var(--muted)", fontSize: 18, padding: "0 4px", flexShrink: 0 }}>×</button>
-                  </div>
-                )}
-
-                {getWeekDays(weekOffset).some(d => d.tasks.length > 0) && (
-                  <div style={{ marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
-                    {getWeekDays(weekOffset).filter(d => d.tasks.length > 0).map(d => (
-                      d.tasks.map(t => (
-                        <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", fontSize: 13 }}>
-                          <div style={{ width: 6, height: 6, borderRadius: "50%", background: d.isToday ? "var(--gold)" : "rgba(255,107,74,0.5)", flexShrink: 0 }} />
-                          <div style={{ width: 44, flexShrink: 0, color: "var(--muted)", fontSize: 12 }}>{d.isToday ? "Today" : d.date.toLocaleDateString("en-GB", { weekday: "short" })}</div>
-                          <div style={{ color: "var(--white)" }}>{t.text}</div>
-                        </div>
-                      ))
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Quick actions — speak/type anything, or jump into mail */}
-              <div style={{ marginBottom: 10 }}>
+              {/* Quick actions — speak/type anything, or jump into mail. Moved
+                  to the top of Home so capture is the first thing available. */}
+              <div style={{ marginBottom: 20 }}>
                 <div className="capture-box" style={{
                   display: "flex", alignItems: "center", gap: 10,
                   background: "var(--surface)", border: `1px solid ${voiceRecording ? "rgba(232,122,122,0.5)" : "var(--border)"}`,
@@ -1438,6 +1342,104 @@ export default function Nona() {
                   <div style={{ display: "flex", gap: 3, alignItems: "center", justifyContent: "center", marginTop: 8 }}>
                     {[0, 0.15, 0.3].map((delay, i) => (
                       <div key={i} style={{ width: 3, height: 16, borderRadius: 2, background: "#e87a7a", animation: `blink 0.8s ${delay}s infinite` }} />
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Morning brief — everything that needs attention today */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <span className="label" style={{ marginBottom: 0 }}>☀️ Today</span>
+                <button onClick={generateBrief} disabled={briefLoading} style={{ fontSize: 11, color: "var(--muted)" }}>{briefLoading ? "…" : "↺ Refresh"}</button>
+              </div>
+              <div className="card" style={{ marginBottom: 20 }}>
+                {briefLoading ? (
+                  <div style={{ padding: "6px 0", fontSize: 13, color: "var(--muted)" }}>Getting your day together…</div>
+                ) : brief ? (
+                  <div style={{ fontSize: 14, lineHeight: 1.7, color: "var(--white)" }}>
+                    {brief.split("\n").map((line, i) => {
+                      const trimmed = line.trim()
+                      if (!trimmed) return <div key={i} style={{ height: 8 }} />
+                      const isHeader = !trimmed.startsWith("•")
+                      return (
+                        <div key={i} style={isHeader
+                          ? { fontSize: 11, fontWeight: 700, color: "var(--gold)", textTransform: "uppercase", letterSpacing: "0.06em", marginTop: i === 0 ? 0 : 10, marginBottom: 2 }
+                          : {}
+                        }>
+                          {trimmed}
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <div style={{ padding: "6px 0", fontSize: 13, color: "var(--muted)" }}>Nothing loaded yet.</div>
+                )}
+              </div>
+
+              {/* Week calendar */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <span className="label" style={{ marginBottom: 0 }}>📅 {getWeekLabel(weekOffset)}</span>
+                <div style={{ display: "flex", gap: 14 }}>
+                  <button onClick={() => setWeekOffset(weekOffset - 1)} style={{ color: "var(--muted)", fontSize: 14 }}>‹</button>
+                  <button onClick={() => setWeekOffset(weekOffset + 1)} style={{ color: "var(--muted)", fontSize: 14 }}>›</button>
+                </div>
+              </div>
+              <div className="card" style={{ marginBottom: 20 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+                  {getWeekDays(weekOffset).map(d => (
+                    <button key={d.iso}
+                      onClick={() => { setAddingForDate(addingForDate === d.iso ? null : d.iso); setDateTaskInput("") }}
+                      style={{
+                        textAlign: "center", padding: "3px 0 1px", borderRadius: 8,
+                        background: addingForDate === d.iso ? "var(--gold-dim)" : "transparent",
+                      }}
+                    >
+                      <div style={{ fontSize: 9, color: "var(--muted)", marginBottom: 6 }}>{d.label}</div>
+                      <div style={{
+                        width: 32, height: 32, margin: "0 auto", borderRadius: "50%",
+                        display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15,
+                        background: d.isToday ? "var(--gold-dim)" : "transparent",
+                        border: d.isToday ? "1px solid var(--gold)" : addingForDate === d.iso ? "1px solid var(--gold-mid)" : "none",
+                        color: d.isToday ? "var(--gold)" : "var(--white)",
+                        fontWeight: d.isToday ? 600 : 400,
+                      }}>{d.num}</div>
+                      {d.tasks.length > 0 && (
+                        <div style={{ width: 4, height: 4, borderRadius: "50%", background: d.isToday ? "var(--gold)" : "rgba(255,107,74,0.5)", margin: "5px auto 0" }} />
+                      )}
+                    </button>
+                  ))}
+                </div>
+
+                {addingForDate && (
+                  <div style={{ marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 12, display: "flex", gap: 8, alignItems: "center" }}>
+                    <input
+                      className="input"
+                      style={{ flex: 1, padding: "9px 12px", fontSize: 13 }}
+                      value={dateTaskInput}
+                      onChange={e => setDateTaskInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); submitDateTask() } }}
+                      placeholder={`Add to ${formatDateShort(addingForDate)}…`}
+                      autoFocus
+                    />
+                    <button onClick={submitDateTask} style={{ background: "var(--gold)", border: "none", borderRadius: 10, width: 36, height: 36, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" width="14" height="14">
+                        <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+                      </svg>
+                    </button>
+                    <button onClick={() => { setAddingForDate(null); setDateTaskInput("") }} style={{ color: "var(--muted)", fontSize: 18, padding: "0 4px", flexShrink: 0 }}>×</button>
+                  </div>
+                )}
+
+                {getWeekDays(weekOffset).some(d => d.tasks.length > 0) && (
+                  <div style={{ marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+                    {getWeekDays(weekOffset).filter(d => d.tasks.length > 0).map(d => (
+                      d.tasks.map(t => (
+                        <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", fontSize: 13 }}>
+                          <div style={{ width: 6, height: 6, borderRadius: "50%", background: d.isToday ? "var(--gold)" : "rgba(255,107,74,0.5)", flexShrink: 0 }} />
+                          <div style={{ width: 44, flexShrink: 0, color: "var(--muted)", fontSize: 12 }}>{d.isToday ? "Today" : d.date.toLocaleDateString("en-GB", { weekday: "short" })}</div>
+                          <div style={{ color: "var(--white)" }}>{t.text}</div>
+                        </div>
+                      ))
                     ))}
                   </div>
                 )}
