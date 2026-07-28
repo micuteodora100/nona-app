@@ -1,13 +1,9 @@
-import { getServerSession } from "next-auth"
-import { getAuthOptions } from "../auth/[...nextauth]"
+import { getSupabaseUser } from "../../../lib/supabase-auth"
 import { getSupabaseServer } from "../../../lib/supabase-server"
 
 export default async function handler(req, res) {
-  const session = await getServerSession(req, res, getAuthOptions(req))
-  if (!session) return res.status(401).json({ error: "Not authenticated" })
-
-  const userId = session.user?.email
-  if (!userId) return res.status(400).json({ error: "No user email" })
+  const user = await getSupabaseUser(req, res)
+  if (!user) return res.status(401).json({ error: "Not authenticated" })
 
   const supabase = getSupabaseServer()
   if (!supabase) return res.status(503).json({ error: "Supabase not configured" })
@@ -18,14 +14,17 @@ export default async function handler(req, res) {
 
     const { error } = await supabase
       .from("push_subscriptions")
-      .upsert({ user_id: userId, subscription, created_at: new Date().toISOString() }, { onConflict: "user_id" })
+      .upsert(
+        { auth_user_id: user.id, user_id: user.email, subscription, created_at: new Date().toISOString() },
+        { onConflict: "auth_user_id" }
+      )
 
     if (error) return res.status(500).json({ error: error.message })
     return res.json({ ok: true })
   }
 
   if (req.method === "DELETE") {
-    const { error } = await supabase.from("push_subscriptions").delete().eq("user_id", userId)
+    const { error } = await supabase.from("push_subscriptions").delete().eq("auth_user_id", user.id)
     if (error) return res.status(500).json({ error: error.message })
     return res.json({ ok: true })
   }

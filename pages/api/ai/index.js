@@ -1,7 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk"
-import { getServerSession } from "next-auth"
-import { getAuthOptions } from "../auth/[...nextauth]"
+import { getSupabaseUser } from "../../../lib/supabase-auth"
+import { getSupabaseServer } from "../../../lib/supabase-server"
 import { DEFAULT_CATEGORIES } from "../../../lib/categories"
+
+const DAILY_AI_LIMIT = parseInt(process.env.DAILY_AI_LIMIT || "200", 10)
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -23,8 +25,21 @@ function parseAIJson(text) {
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end()
 
-  const session = await getServerSession(req, res, getAuthOptions(req))
-  if (!session) return res.status(401).json({ error: "Not authenticated" })
+  const user = await getSupabaseUser(req, res)
+  if (!user) return res.status(401).json({ error: "Not authenticated" })
+
+  const supabase = getSupabaseServer()
+  if (supabase) {
+    const { data: allowed, error: usageError } = await supabase.rpc("increment_ai_usage", {
+      p_user_id: user.id,
+      p_limit: DAILY_AI_LIMIT,
+    })
+    if (usageError) {
+      console.error("AI usage guardrail check failed:", usageError.message)
+    } else if (allowed === false) {
+      return res.status(429).json({ error: "Daily AI usage limit reached — try again tomorrow." })
+    }
+  }
 
   const { type, emails, tasks, context, categories } = req.body
 

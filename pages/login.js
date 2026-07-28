@@ -12,10 +12,10 @@ export default function Login() {
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
   const [loading, setLoading] = useState(false)
+  const [configError, setConfigError] = useState(false)
 
   useEffect(() => {
-    // If Supabase not configured, fall back to password gate
-    if (!supabase) { router.push("/gate"); return }
+    if (!supabase) { setConfigError(true); return }
 
     // Check if already logged in
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -79,6 +79,9 @@ export default function Login() {
       <div className="wrap">
         <div className="logo">nona</div>
         <div className="tag">your personal AI</div>
+        {configError ? (
+          <div className="err">Sign-in isn't configured on this deployment. Contact the site owner.</div>
+        ) : (
         <form onSubmit={handleLogin}>
           <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" required />
           {mode !== "magic" && (
@@ -101,6 +104,7 @@ export default function Login() {
             {mode !== "magic" && <button type="button" className="mode-link" onClick={() => { setMode("magic"); setError(""); setMessage("") }}>Magic link</button>}
           </div>
         </form>
+        )}
       </div>
     </>
   )

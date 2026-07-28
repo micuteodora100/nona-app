@@ -1,5 +1,7 @@
 import { getToken, encode } from "next-auth/jwt"
 import { getSupabaseServer } from "../../../lib/supabase-server"
+import { getSupabaseUserReadOnly } from "../../../lib/supabase-auth"
+import { revokeProviderToken } from "../../../lib/tokens"
 
 // NextAuth (JWT strategy, no adapter) has no built-in "sign out of just one
 // provider" — signOut() always clears the whole session. To disconnect only
@@ -24,21 +26,23 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Provider not connected" })
   }
 
-  const providerEmail = token.providers[provider].email
   const nextProviders = { ...token.providers }
   delete nextProviders[provider]
   const nextToken = { ...token, providers: nextProviders }
 
-  // Best-effort cleanup of the stored access/refresh token for this provider
-  // — not required for the session fix itself, but leaves no orphaned
-  // credential behind once the UI says "not connected".
+  // Revoke upstream + delete our stored copy, keyed by the Supabase Auth
+  // identity (not the provider's own email — see lib/tokens.js).
   try {
-    const supabase = getSupabaseServer()
-    if (supabase && providerEmail) {
-      await supabase.from("oauth_tokens").delete().eq("user_id", providerEmail).eq("provider", provider)
+    const user = await getSupabaseUserReadOnly(req)
+    if (user) {
+      await revokeProviderToken(user.id, provider)
+      const supabase = getSupabaseServer()
+      if (supabase) {
+        await supabase.from("oauth_tokens").delete().eq("auth_user_id", user.id).eq("provider", provider)
+      }
     }
   } catch (err) {
-    console.error("Failed to delete stored tokens on disconnect:", err.message)
+    console.error("Failed to revoke/delete stored tokens on disconnect:", err.message)
   }
 
   const secureCookie = process.env.NEXTAUTH_URL?.startsWith("https://") ?? !!process.env.VERCEL

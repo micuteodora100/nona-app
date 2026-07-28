@@ -1816,7 +1816,7 @@ export default function Nona() {
               </div>
 
               <div style={{ marginTop: 24 }}>
-                <button className="btn btn-outline" onClick={async () => { if (confirm("Reset everything?")) { localStorage.clear(); if (supabase) await supabase.auth.signOut(); window.location.reload() } }}>
+                <button className="btn btn-outline" onClick={async () => { if (confirm("Reset everything?")) { localStorage.clear(); if (supabase) await supabase.auth.signOut(); await signOut({ redirect: false }); window.location.reload() } }}>
                   Reset Nona
                 </button>
               </div>

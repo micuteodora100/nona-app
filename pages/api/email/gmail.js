@@ -1,5 +1,4 @@
-import { getServerSession } from "next-auth"
-import { getAuthOptions } from "../auth/[...nextauth]"
+import { getSupabaseUser } from "../../../lib/supabase-auth"
 import { getAccessToken } from "../../../lib/tokens"
 import { google } from "googleapis"
 
@@ -87,14 +86,11 @@ async function extractPdfText(gmail, messageId, attachmentId) {
 }
 
 export default async function handler(req, res) {
-  const session = await getServerSession(req, res, getAuthOptions(req))
-  const googleAuth = session?.providers?.google
-  if (!googleAuth) {
-    return res.status(401).json({ error: "Not authenticated with Google" })
-  }
+  const user = await getSupabaseUser(req, res)
+  if (!user) return res.status(401).json({ error: "Not authenticated" })
 
   try {
-    const accessToken = await getAccessToken(googleAuth.email, "google")
+    const accessToken = await getAccessToken(user.id, "google")
     if (!accessToken) {
       return res.status(401).json({ error: "Google connection expired — reconnect Gmail in Settings" })
     }

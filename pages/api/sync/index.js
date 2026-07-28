@@ -1,24 +1,21 @@
-import { getServerSession } from 'next-auth'
-import { getAuthOptions } from '../auth/[...nextauth]'
+import { getSupabaseUser } from '../../../lib/supabase-auth'
 import { getSupabaseServer } from '../../../lib/supabase-server'
 
 export default async function handler(req, res) {
-  const session = await getServerSession(req, res, getAuthOptions(req))
-  if (!session) return res.status(401).json({ error: 'Not authenticated' })
+  const user = await getSupabaseUser(req, res)
+  if (!user) return res.status(401).json({ error: 'Not authenticated' })
 
   const supabase = getSupabaseServer()
   if (!supabase) return res.status(503).json({ error: 'Supabase not configured' })
 
-  // Use email as the user identifier (from Gmail OAuth)
-  const userId = session.user?.email
-  if (!userId) return res.status(400).json({ error: 'No user email' })
+  const userId = user.id
 
   if (req.method === 'GET') {
     // Load user data from Supabase
     const { data, error } = await supabase
       .from('nona_user_data')
       .select('*')
-      .eq('user_id', userId)
+      .eq('auth_user_id', userId)
       .single()
 
     if (error && error.code !== 'PGRST116') { // PGRST116 = not found
@@ -35,12 +32,13 @@ export default async function handler(req, res) {
     const { error } = await supabase
       .from('nona_user_data')
       .upsert({
-        user_id: userId,
+        auth_user_id: userId,
+        user_id: user.email,
         tasks: tasks || [],
         profile: profile || {},
         handled_emails: handledEmails || [],
         updated_at: new Date().toISOString(),
-      }, { onConflict: 'user_id' })
+      }, { onConflict: 'auth_user_id' })
 
     if (error) return res.status(500).json({ error: error.message })
     return res.json({ ok: true })

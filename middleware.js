@@ -1,18 +1,6 @@
 import { NextResponse } from "next/server"
 import { createServerClient } from "@supabase/ssr"
 
-// Edge-compatible HMAC using Web Crypto API
-async function verifyAppPassword(token, secret) {
-  if (!token) return false
-  const [value, sig] = token.split(".")
-  if (!value || !sig) return false
-  const enc = new TextEncoder()
-  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"])
-  const expected = await crypto.subtle.sign("HMAC", key, enc.encode(value))
-  const expectedHex = Array.from(new Uint8Array(expected)).map(b => b.toString(16).padStart(2, "0")).join("")
-  return expectedHex === sig && value === "authenticated"
-}
-
 export async function middleware(req) {
   const { pathname } = req.nextUrl
 
@@ -24,14 +12,12 @@ export async function middleware(req) {
 
   // Always allow these paths
   const allowList = [
-    "/gate",
     "/login",
     "/about",
     "/privacy",
     "/terms",
     "/contact",
     "/unsubscribe",
-    "/api/auth-gate",
     "/api/auth",
     "/api/mailing-list",
     "/api/contact",
@@ -46,15 +32,8 @@ export async function middleware(req) {
     return NextResponse.next()
   }
 
-  const secret = process.env.NEXTAUTH_SECRET || "fallback-secret"
-
-  // Check APP_PASSWORD cookie (legacy gate — still works)
-  const appPasswordCookie = req.cookies.get("nona_auth")?.value
-  if (await verifyAppPassword(appPasswordCookie, secret)) {
-    return NextResponse.next()
-  }
-
-  // Check Supabase session (new proper auth)
+  // Check Supabase session — the only way into /app now that the legacy
+  // shared-password gate has been retired (multi-user identity migration).
   // The old version just checked for the presence of a "sb-*-auth-token"
   // cookie by name — but createBrowserClient (lib/supabase.js) stores the
   // session as an HttpOnly-less cookie whose value alone doesn't prove it's
@@ -84,9 +63,8 @@ export async function middleware(req) {
   }
 
   // Not authenticated — redirect to login
-  // Try Supabase login first if configured, else fall back to password gate
   const url = req.nextUrl.clone()
-  url.pathname = hasSupabase ? "/login" : "/gate"
+  url.pathname = "/login"
   return NextResponse.redirect(url)
 }
 

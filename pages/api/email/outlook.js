@@ -1,5 +1,4 @@
-import { getServerSession } from "next-auth"
-import { getAuthOptions } from "../auth/[...nextauth]"
+import { getSupabaseUser } from "../../../lib/supabase-auth"
 import { getAccessToken } from "../../../lib/tokens"
 
 function stripHtml(html) {
@@ -40,15 +39,11 @@ async function extractPdfTextFromMessage(messageId, accessToken) {
 // Microsoft Graph API — proper OAuth, replaces broken IMAP approach
 // Reads emails from user's Outlook inbox using their access token
 export default async function handler(req, res) {
-  const session = await getServerSession(req, res, getAuthOptions(req))
-
-  const microsoftAuth = session?.providers?.microsoft
-  if (!microsoftAuth) {
-    return res.status(401).json({ error: "Not authenticated with Microsoft" })
-  }
+  const user = await getSupabaseUser(req, res)
+  if (!user) return res.status(401).json({ error: "Not authenticated" })
 
   try {
-    const accessToken = await getAccessToken(microsoftAuth.email, "microsoft")
+    const accessToken = await getAccessToken(user.id, "microsoft")
     if (!accessToken) {
       return res.status(401).json({ error: "Microsoft connection expired — reconnect Outlook in Settings" })
     }

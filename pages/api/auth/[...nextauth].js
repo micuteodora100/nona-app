@@ -2,6 +2,7 @@ import NextAuth from "next-auth"
 import { getToken } from "next-auth/jwt"
 import GoogleProvider from "next-auth/providers/google"
 import { persistProviderTokens } from "../../../lib/tokens"
+import { getSupabaseUserReadOnly } from "../../../lib/supabase-auth"
 
 // Microsoft personal accounts via OAuth 2.0 + Microsoft Graph API
 // Uses /consumers endpoint for personal @outlook.com/@hotmail.com accounts
@@ -69,11 +70,24 @@ export function getAuthOptions(req) {
           }
 
           try {
-            await persistProviderTokens(providerEmail, account.provider, {
-              accessToken: account.access_token,
-              refreshToken: account.refresh_token,
-              expiresAt: account.expires_at,
-            })
+            // Tokens are stored against the Supabase Auth identity someone is
+            // actually logged into the app as — never against the OAuth
+            // provider's own email. Otherwise two different app accounts that
+            // happen to connect the same-looking data would collide, and one
+            // person's tasks/tokens could end up keyed by whichever email
+            // Google/Microsoft last handed back. See ROADMAP.md's multi-user
+            // identity migration for the full story.
+            const supabaseUser = await getSupabaseUserReadOnly(req)
+            if (!supabaseUser) {
+              console.error("Cannot persist provider tokens: no Supabase Auth session on this request — connect Gmail/Outlook from inside the logged-in app, not standalone.")
+            } else {
+              await persistProviderTokens(supabaseUser.id, account.provider, {
+                accessToken: account.access_token,
+                refreshToken: account.refresh_token,
+                expiresAt: account.expires_at,
+                accountEmail: providerEmail,
+              })
+            }
           } catch (err) {
             // Never break sign-in over token persistence — log and move on
             console.error("persistProviderTokens failed:", err.message)

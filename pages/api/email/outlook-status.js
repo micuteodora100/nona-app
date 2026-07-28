@@ -1,18 +1,13 @@
-import { getServerSession } from "next-auth"
-import { getAuthOptions } from "../auth/[...nextauth]"
+import { getSupabaseUser } from "../../../lib/supabase-auth"
 import { getAccessToken } from "../../../lib/tokens"
 
 // Test Microsoft Graph connection using the stored access token
 export default async function handler(req, res) {
-  const session = await getServerSession(req, res, getAuthOptions(req))
-  const microsoftAuth = session?.providers?.microsoft
-
-  if (!microsoftAuth) {
-    return res.json({ ok: false, error: "Not connected with Microsoft account" })
-  }
+  const user = await getSupabaseUser(req, res)
+  if (!user) return res.json({ ok: false, error: "Not authenticated" })
 
   try {
-    const accessToken = await getAccessToken(microsoftAuth.email, "microsoft")
+    const accessToken = await getAccessToken(user.id, "microsoft")
     if (!accessToken) {
       return res.json({ ok: false, error: "Microsoft connection expired — reconnect Outlook in Settings" })
     }
