@@ -198,7 +198,7 @@ The actual current date is ${todayStr}. Treat this as ground truth — do not re
 
 About ${context.name}:
 - Child: ${context.child}${context.creche ? ` — today: ${context.creche}` : ""}
-- Work: ${context.work || "Job search + building Nona startup"}
+- Work: ${context.work || "Not specified"}
 
 Pending tasks (each tagged with its category and date status):
 ${pendingTasks || "(none)"}

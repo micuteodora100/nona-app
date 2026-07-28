@@ -278,13 +278,9 @@ export default function Nona() {
       setDisconnectingProvider(null)
     }
   }
-  const [obStep, setObStep] = useState(1)
   const [obName, setObName] = useState("")
   const [obChild, setObChild] = useState("")
   const [obTime, setObTime] = useState("07:00")
-  const [obLoad, setObLoad] = useState("")
-  const [obCreche, setObCreche] = useState("")
-  const [obWork, setObWork] = useState("")
 
   const [profile, setProfile] = useState({ name: "", child: "", briefTime: "07:00", work: "", creche: "", language: "en-GB", emailFilters: [], recurring: [] })
   const [tasks, setTasks] = useState([])
@@ -417,24 +413,10 @@ export default function Nona() {
   }, [onboarded])
 
   // ── onboarding ───────────────────────────────────────────────────────
-  const [obParsing, setObParsing] = useState(false)
-
   async function obNext() {
-    if (obStep === 1) {
-      setObStep(2)
-    } else if (obStep === 2) {
-      if (obLoad.trim()) {
-        setObParsing(true)
-        const parsed = await parseTasksFromText(obLoad)
-        setTasks(parsed)
-        setObParsing(false)
-      }
-      setObStep(3)
-    } else {
-      const p = { name: obName || "Teodora", child: obChild || "Timothée, 3", briefTime: obTime, work: obWork, creche: obCreche }
-      setProfile(p)
-      setOnboarded(true)
-    }
+    const p = { name: obName, child: obChild, briefTime: obTime }
+    setProfile(p)
+    setOnboarded(true)
   }
 
   // ── weather ──────────────────────────────────────────────────────────
@@ -547,7 +529,7 @@ export default function Nona() {
         body: JSON.stringify({
           type: "triage",
           emails: listToTriage,
-          context: { name: profile.name || "Teodora", child: profile.child || "Timothée" },
+          context: { name: profile.name || "there", child: profile.child || "your child" },
           categories: getCategories(profile),
         }),
       })
@@ -695,8 +677,8 @@ export default function Nona() {
           tasks,
           categories: getCategories(profile),
           context: {
-            name: profile.name || "Teodora",
-            child: profile.child || "Timothée",
+            name: profile.name || "there",
+            child: profile.child || "your child",
             creche: profile.creche,
             work: profile.work,
             emailSummary: triage?.summary || null,
@@ -1017,7 +999,7 @@ export default function Nona() {
   // ── greeting ──────────────────────────────────────────────────────────
   const hour = new Date().getHours()
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening"
-  const firstName = (profile.name || "Teodora").split(" ")[0]
+  const firstName = (profile.name || "there").split(" ")[0]
   const dateStr = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })
 
   // ── RENDER ────────────────────────────────────────────────────────────
@@ -1199,43 +1181,17 @@ export default function Nona() {
           <div className="ob-logo">nona</div>
           <div className="ob-tag">your personal AI</div>
           <div className="ob-step">
-            {obStep === 1 && <>
-              <span style={{ fontSize: 10, color: "var(--gold)", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600 }}>Step 1 of 3</span>
-              <h2>Let's make this yours.</h2>
-              <p>A few things so Nona knows how to start your day.</p>
-              <div><label className="field-label">Your name</label>
-                <input className="input" value={obName} onChange={e => setObName(e.target.value)} placeholder="Teodora" /></div>
-              <div><label className="field-label">Your child's name & age</label>
-                <input className="input" value={obChild} onChange={e => setObChild(e.target.value)} placeholder="e.g. Timothée, 3 years" /></div>
-              <div><label className="field-label">Morning brief time</label>
-                <input className="input" type="time" value={obTime} onChange={e => setObTime(e.target.value)} /></div>
-              <button className="btn btn-gold" onClick={obNext}>Continue →</button>
-              <div className="dots"><div className="dot on" /><div className="dot" /><div className="dot" /></div>
-            </>}
-
-            {obStep === 2 && <>
-              <span style={{ fontSize: 10, color: "var(--gold)", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600 }}>Step 2 of 3</span>
-              <h2>What's on your mind today?</h2>
-              <p>Brain dump everything — Nona will organise it into tasks.</p>
-              <div><label className="field-label">Today's mental load</label>
-                <textarea className="input" rows={4} value={obLoad} onChange={e => setObLoad(e.target.value)} placeholder="Call crèche about Thursday, check gym shoes, send invoice, dentist…" /></div>
-              <div><label className="field-label">What's {obChild || "your child"} doing today?</label>
-                <input className="input" value={obCreche} onChange={e => setObCreche(e.target.value)} placeholder="e.g. crèche until 18h, swimming at 17h" /></div>
-              <button className="btn btn-gold" onClick={obNext} disabled={obParsing}>{obParsing ? "Organising…" : "Continue →"}</button>
-              <button className="btn btn-outline" onClick={obNext} disabled={obParsing}>Skip</button>
-              <div className="dots"><div className="dot" /><div className="dot on" /><div className="dot" /></div>
-            </>}
-
-            {obStep === 3 && <>
-              <span style={{ fontSize: 10, color: "var(--gold)", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600 }}>Step 3 of 3</span>
-              <h2>What are you working on?</h2>
-              <p>So Nona knows what matters most right now.</p>
-              <div><label className="field-label">Current focus</label>
-                <textarea className="input" rows={3} value={obWork} onChange={e => setObWork(e.target.value)} placeholder="Job search (VP ops roles) + building Nona startup. French exam September. AWS certs July." /></div>
-              <button className="btn btn-gold" onClick={obNext}>Start my day →</button>
-              <button className="btn btn-outline" onClick={obNext}>Skip</button>
-              <div className="dots"><div className="dot" /><div className="dot" /><div className="dot on" /></div>
-            </>}
+            {/* Single step for now — the AI context survey (groupings + email-pattern
+                detection) is being built separately and will extend this flow. */}
+            <h2>Let's make this yours.</h2>
+            <p>A few things so Nona knows how to start your day.</p>
+            <div><label className="field-label">Your name</label>
+              <input className="input" value={obName} onChange={e => setObName(e.target.value)} placeholder="e.g. Alex" /></div>
+            <div><label className="field-label">Your child's name & age</label>
+              <input className="input" value={obChild} onChange={e => setObChild(e.target.value)} placeholder="e.g. Jamie, 3 years" /></div>
+            <div><label className="field-label">Morning brief time</label>
+              <input className="input" type="time" value={obTime} onChange={e => setObTime(e.target.value)} /></div>
+            <button className="btn btn-gold" onClick={obNext}>Start my day →</button>
           </div>
         </div>
       ) : (
