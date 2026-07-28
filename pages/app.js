@@ -170,14 +170,33 @@ export default function Nona() {
   const [pushEnabled, setPushEnabled] = useState(false)
   const [pushBusy, setPushBusy] = useState(false)
 
-  // Listen for Supabase auth state changes
+  // Listen for Supabase auth state changes. localStorage is a single
+  // browser-wide key, not scoped per account — on a shared device, if the
+  // logged-in account changes without the cache being cleared, the safe-merge
+  // logic in the cloud-load effect below would treat the previous account's
+  // leftover tasks as "not yet synced" and write them into the NEW account's
+  // cloud data. Detect the switch here and wipe local state before anything
+  // else runs.
+  function handleAuthUser(user) {
+    const stored = loadState()
+    if (stored?.ownerId && stored.ownerId !== (user?.id || null)) {
+      localStorage.removeItem(STORAGE_KEY)
+      localStorage.removeItem("nona_handled_emails")
+      setOnboarded(false)
+      setProfile({ name: "", child: "", briefTime: "07:00", work: "", creche: "", language: "en-GB", emailFilters: [], recurring: [] })
+      setTasks([])
+      setHandledEmails(new Set())
+    }
+    setSupabaseUser(user)
+  }
+
   useEffect(() => {
     if (!supabase) return
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setSupabaseUser(session?.user || null)
+      handleAuthUser(session?.user || null)
     })
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSupabaseUser(session?.user || null)
+      handleAuthUser(session?.user || null)
     })
     return () => subscription.unsubscribe()
   }, [])
@@ -301,12 +320,15 @@ export default function Nona() {
     }
   }, [])
 
-  // Save to localStorage on every change
+  // Save to localStorage on every change. Tags the cache with whichever
+  // account is currently logged in (see handleAuthUser above) so a later
+  // switch to a different account on this browser can be detected and the
+  // stale cache cleared instead of silently bleeding into the new account.
   useEffect(() => {
     if (onboarded) {
-      saveState({ onboarded: true, profile, tasks })
+      saveState({ onboarded: true, profile, tasks, ownerId: supabaseUser?.id || null })
     }
-  }, [onboarded, profile, tasks])
+  }, [onboarded, profile, tasks, supabaseUser])
 
   // Sync to Supabase when logged in and data changes. Keyed off supabaseUser
   // (the actual account someone is logged into) — NOT the NextAuth session,
@@ -1961,7 +1983,19 @@ export default function Nona() {
                 </div>
               </div>
 
-              <div style={{ marginTop: 24 }}>
+              {supabaseUser && (
+                <div style={{ marginTop: 24 }}>
+                  <button className="btn btn-outline" onClick={async () => {
+                    if (supabase) await supabase.auth.signOut()
+                    await signOut({ redirect: false })
+                    window.location.href = "/login"
+                  }}>
+                    Sign out
+                  </button>
+                </div>
+              )}
+
+              <div style={{ marginTop: 12 }}>
                 <button className="btn btn-outline" onClick={async () => { if (confirm("Reset everything?")) { localStorage.clear(); if (supabase) await supabase.auth.signOut(); await signOut({ redirect: false }); window.location.reload() } }}>
                   Reset Nona
                 </button>
