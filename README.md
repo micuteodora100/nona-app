@@ -86,6 +86,8 @@ In your Vercel project → Settings → Environment Variables, add:
 | `GOOGLE_CLIENT_SECRET` | From Step 3A |
 | `OUTLOOK_EMAIL` | `your@outlook.com` |
 | `OUTLOOK_PASSWORD` | Your Outlook password |
+| `RESEND_API_KEY` | (Optional) From resend.com — emails you when someone submits the /contact form |
+| `CONTACT_NOTIFY_EMAIL` | (Optional) The inbox that should receive those notifications |
 
 Then: **Deploy** in Vercel.
 
