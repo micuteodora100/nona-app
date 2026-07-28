@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react"
-import { useSession, signIn, signOut } from "next-auth/react"
+import { signIn, signOut } from "next-auth/react"
 import Head from "next/head"
 import { supabase } from "../lib/supabase"
 import { subscribeToPush, unsubscribeFromPush, getPushPermissionState } from "../lib/push-client"
@@ -158,8 +158,6 @@ function weatherLabel(code) {
 
 // ── component ─────────────────────────────────────────────────────────────
 export default function Nona() {
-  const { data: session } = useSession()
-
   const [onboarded, setOnboarded] = useState(false)
   const [supabaseUser, setSupabaseUser] = useState(null)
   const [pushEnabled, setPushEnabled] = useState(false)
@@ -176,6 +174,11 @@ export default function Nona() {
     })
     return () => subscription.unsubscribe()
   }, [])
+
+  useEffect(() => {
+    if (supabaseUser) fetchProviderStatus()
+    else setProviders({})
+  }, [supabaseUser])
 
   useEffect(() => {
     getPushPermissionState().then((state) => setPushEnabled(state === "granted"))
@@ -201,8 +204,7 @@ export default function Nona() {
   const [disconnectingProvider, setDisconnectingProvider] = useState(null)
 
   // Disconnects only the given provider (Gmail or Outlook), leaving the other
-  // one signed in — signOut() would clear both, which is what "Disconnect all"
-  // is for instead.
+  // one connected — "Disconnect all" below calls this for both instead.
   async function disconnectProvider(provider) {
     setDisconnectingProvider(provider)
     try {
@@ -214,6 +216,34 @@ export default function Nona() {
       if (!r.ok) {
         const d = await r.json().catch(() => ({}))
         throw new Error(d.error || "Failed to disconnect")
+      }
+      window.location.reload()
+    } catch (err) {
+      alert(err.message)
+      setDisconnectingProvider(null)
+    }
+  }
+
+  // "Disconnect all" used to just call NextAuth's signOut() — that only
+  // cleared the browser's NextAuth cookie, never the actual oauth_tokens rows.
+  // Harmless back when the UI's "connected" status also came from that same
+  // cookie, but now that both the UI and the email-fetch routes read
+  // oauth_tokens directly, clearing only the cookie would leave everything
+  // still showing "connected". Revoke/delete both providers for real instead.
+  async function disconnectAllProviders() {
+    setDisconnectingProvider("all")
+    try {
+      for (const provider of ["google", "microsoft"]) {
+        if (!providers?.[provider]) continue
+        const r = await fetch("/api/auth/disconnect-provider", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider }),
+        })
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}))
+          throw new Error(d.error || `Failed to disconnect ${provider}`)
+        }
       }
       window.location.reload()
     } catch (err) {
@@ -248,7 +278,7 @@ export default function Nona() {
     try { return new Set(JSON.parse(localStorage.getItem("nona_handled_emails") || "[]")) }
     catch { return new Set() }
   })
-  const [outlookStatus, setOutlookStatus] = useState(null) // null=unchecked, {ok, error/email}
+  const [providers, setProviders] = useState({}) // {google: {connected, email}, microsoft: {...}} — from oauth_tokens, not the NextAuth session
 
   const [taskInput, setTaskInput] = useState("")
   const [taskFilter, setTaskFilter] = useState("all")
@@ -270,19 +300,25 @@ export default function Nona() {
     }
   }, [onboarded, profile, tasks])
 
-  // Sync to Supabase when session is available and data changes
+  // Sync to Supabase when logged in and data changes. Keyed off supabaseUser
+  // (the actual account someone is logged into) — NOT the NextAuth session,
+  // which only exists once Gmail/Outlook has been connected in this browser
+  // and previously meant a freshly logged-in second device/browser had no
+  // sync at all until it reconnected email. See ROADMAP.md's multi-user
+  // identity migration.
   useEffect(() => {
-    if (onboarded && session) {
+    if (onboarded && supabaseUser) {
       const timer = setTimeout(() => {
         syncToSupabase(tasks, profile, handledEmails)
       }, 2000) // debounce 2s to avoid hammering on rapid changes
       return () => clearTimeout(timer)
     }
-  }, [tasks, profile, onboarded, session])
+  }, [tasks, profile, onboarded, supabaseUser])
 
-  // Load from Supabase when session first becomes available (cross-device sync)
+  // Load from Supabase when logged in (cross-device sync) — keyed off
+  // supabaseUser, not the NextAuth session (see comment above the save effect).
   useEffect(() => {
-    if (session && onboarded) {
+    if (supabaseUser && onboarded) {
       loadFromSupabase().then(data => {
         if (data) {
           // Supabase data takes precedence over localStorage for cross-device sync
@@ -295,12 +331,11 @@ export default function Nona() {
         }
       })
     }
-  }, [session])
+  }, [supabaseUser, onboarded])
 
   useEffect(() => {
     if (onboarded) {
       fetchWeather()
-      checkOutlookStatus()
       // Only regenerate brief if older than 6 hours
       const cachedBrief = loadCache("nona_brief", 6)
       if (cachedBrief) {
@@ -343,14 +378,15 @@ export default function Nona() {
     } catch { setWeather({ temp: null, code: 0 }) }
   }
 
-  // ── outlook status ───────────────────────────────────────────────────
-  async function checkOutlookStatus() {
+  // ── provider connection status ──────────────────────────────────────
+  async function fetchProviderStatus() {
     try {
-      const r = await fetch("/api/email/outlook-status")
+      const r = await fetch("/api/auth/provider-status")
+      if (!r.ok) return
       const d = await r.json()
-      setOutlookStatus(d)
+      setProviders(d.providers || {})
     } catch (e) {
-      setOutlookStatus({ ok: false, error: e.message })
+      console.error("Failed to load provider status:", e.message)
     }
   }
 
@@ -372,7 +408,7 @@ export default function Nona() {
       const allEmails = []
       const fetchErrors = []
       // Gmail via OAuth
-      if (session?.providers?.google) {
+      if (providers?.google) {
         const r = await fetch("/api/email/gmail")
         if (r.ok) {
           const d = await r.json()
@@ -384,7 +420,7 @@ export default function Nona() {
         }
       }
       // Outlook via Microsoft Graph OAuth (proper OAuth, replaces IMAP)
-      if (session?.providers?.microsoft) {
+      if (providers?.microsoft) {
         const ro = await fetch("/api/email/outlook")
         if (ro.ok) {
           const d = await ro.json()
@@ -395,7 +431,7 @@ export default function Nona() {
           console.error("Outlook fetch failed:", ro.status, errText)
         }
       }
-      if (allEmails.length === 0 && !session) {
+      if (allEmails.length === 0 && !providers?.google && !providers?.microsoft) {
         setEmailError("Connect Gmail or Outlook to see your emails.")
         setEmailLoading(false)
         return
@@ -1366,26 +1402,26 @@ export default function Nona() {
                 <div style={{ fontSize: 12, color: "var(--muted)" }}>Nona reads and prioritises your emails</div>
               </div>
 
-              {session && (
+              {supabaseUser && (
                 <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
                   <span style={{
                     fontSize: 11, fontWeight: 600, padding: "5px 10px", borderRadius: 20, border: "1px solid var(--border)",
-                    background: session.providers?.google ? "var(--gold)" : "transparent",
-                    color: session.providers?.google ? "var(--white)" : "var(--muted)",
+                    background: providers?.google ? "var(--gold)" : "transparent",
+                    color: providers?.google ? "var(--white)" : "var(--muted)",
                   }}>
-                    {session.providers?.google ? `✓ Gmail — ${session.providers.google.email}` : "✕ Gmail not connected"}
+                    {providers?.google ? `✓ Gmail — ${providers.google.email}` : "✕ Gmail not connected"}
                   </span>
                   <span style={{
                     fontSize: 11, fontWeight: 600, padding: "5px 10px", borderRadius: 20, border: "1px solid var(--border)",
-                    background: session.providers?.microsoft ? "var(--gold)" : "transparent",
-                    color: session.providers?.microsoft ? "var(--white)" : "var(--muted)",
+                    background: providers?.microsoft ? "var(--gold)" : "transparent",
+                    color: providers?.microsoft ? "var(--white)" : "var(--muted)",
                   }}>
-                    {session.providers?.microsoft ? `✓ Outlook — ${session.providers.microsoft.email}` : "✕ Outlook not connected"}
+                    {providers?.microsoft ? `✓ Outlook — ${providers.microsoft.email}` : "✕ Outlook not connected"}
                   </span>
                 </div>
               )}
 
-              {!session ? (
+              {!providers?.google && !providers?.microsoft ? (
                 <div className="card">
                   <span className="label">Connect your email</span>
                   <p style={{ fontSize: 14, color: "var(--muted)", marginBottom: 16, lineHeight: 1.6 }}>
@@ -1512,7 +1548,7 @@ export default function Nona() {
               </>) : (
                 <div style={{ textAlign: "center", padding: "48px 16px", color: "var(--muted)", fontSize: 14 }}>
                   <div style={{ fontSize: 32, marginBottom: 12 }}>📬</div>
-                  Connected as {session.user?.email}
+                  Connected as {providers?.google?.email || providers?.microsoft?.email}
                   <br /><br />
                   <button className="btn btn-gold" style={{ width: "auto", padding: "12px 24px" }} onClick={() => fetchEmails(true)}>Load & triage my inbox</button>
                 </div>
@@ -1704,15 +1740,17 @@ export default function Nona() {
 
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, padding: "0 4px" }}>
                 <span style={{ fontSize: 10, color: "var(--gold)", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600 }}>Email</span>
-                {(session?.providers?.google || session?.providers?.microsoft) && (
-                  <button className="btn-sm" style={{ fontSize: 11, color: "#e87a7a" }} onClick={() => signOut()}>Disconnect all</button>
+                {(providers?.google || providers?.microsoft) && (
+                  <button className="btn-sm" style={{ fontSize: 11, color: "#e87a7a" }} disabled={disconnectingProvider === "all"} onClick={disconnectAllProviders}>
+                    {disconnectingProvider === "all" ? "…" : "Disconnect all"}
+                  </button>
                 )}
               </div>
-              {session?.providers?.google ? (
+              {providers?.google ? (
                 <div className="settings-row">
                   <div>
                     <div style={{ fontSize: 14 }}>Gmail connected ✓</div>
-                    <div style={{ fontSize: 12, color: "var(--muted)" }}>{session.providers.google.email}</div>
+                    <div style={{ fontSize: 12, color: "var(--muted)" }}>{providers.google.email}</div>
                   </div>
                   <button className="btn-sm" disabled={disconnectingProvider === "google"} onClick={() => disconnectProvider("google")}>
                     {disconnectingProvider === "google" ? "…" : "Disconnect"}
@@ -1725,11 +1763,11 @@ export default function Nona() {
                 </div>
               )}
 
-              {session?.providers?.microsoft ? (
+              {providers?.microsoft ? (
                 <div className="settings-row">
                   <div>
                     <div style={{ fontSize: 14 }}>Outlook connected ✓</div>
-                    <div style={{ fontSize: 12, color: "var(--muted)" }}>{session.providers.microsoft.email}</div>
+                    <div style={{ fontSize: 12, color: "var(--muted)" }}>{providers.microsoft.email}</div>
                   </div>
                   <button className="btn-sm" disabled={disconnectingProvider === "microsoft"} onClick={() => disconnectProvider("microsoft")}>
                     {disconnectingProvider === "microsoft" ? "…" : "Disconnect"}
@@ -1822,7 +1860,7 @@ export default function Nona() {
               </div>
 
               <div style={{ textAlign: "center", marginTop: 20, fontSize: 11, color: "var(--muted)" }}>
-                Nona v0.3 · built for {profile.name || "you"} · {session ? "☁️ syncing to cloud" : "💾 local only"}
+                Nona v0.3 · built for {profile.name || "you"} · {supabaseUser ? "☁️ syncing to cloud" : "💾 local only"}
               </div>
             </>}
 
