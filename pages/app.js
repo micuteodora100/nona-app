@@ -59,6 +59,13 @@ async function loadFromSupabase() {
   } catch { return null }
 }
 
+// Pulls the actual address out of a "Name <addr@x.com>" From header — muting
+// by address is more precise than by display name (which can vary per email).
+function extractEmailAddress(from) {
+  const match = from?.match(/<(.+)>/)
+  return (match ? match[1] : from || "").toLowerCase().trim()
+}
+
 function guessTag(text) {
   const t = text.toLowerCase()
   if (/crèche|creche|timothée|timothee|school|swim|gym|pick.up|drop.off/.test(t)) return "family"
@@ -273,6 +280,7 @@ export default function Nona() {
   const [emailLoading, setEmailLoading] = useState(false)
   const [emailError, setEmailError] = useState(null)
   const [showAllEmails, setShowAllEmails] = useState(false)
+  const [showMuted, setShowMuted] = useState(false)
   const [addedTaskIndices, setAddedTaskIndices] = useState([])
   const [handledEmails, setHandledEmails] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem("nona_handled_emails") || "[]")) }
@@ -597,6 +605,19 @@ export default function Nona() {
     })
     // Also mark any tasks from this email as done
     setTasks(prev => prev.map(t => t.emailKey === key ? { ...t, done: true } : t))
+  }
+
+  // One-click alternative to typing a rule into Settings → Email filter rules
+  // — mutes by the sender's actual address, so it only ever matches that
+  // sender (not a broad word that could catch other mail).
+  function muteSender(from) {
+    const address = extractEmailAddress(from)
+    if (!address) return
+    setProfile(p => {
+      const existing = p.emailFilters || []
+      if (existing.some(r => r.toLowerCase() === address)) return p
+      return { ...p, emailFilters: [...existing, address] }
+    })
   }
 
   async function addEmailAsTask(email, index) {
@@ -1572,31 +1593,66 @@ export default function Nona() {
                   {showAllEmails ? "Hide" : "Show"} all {emails.length} emails Nona looked at
                 </button>
 
-                {showAllEmails && (
-                  <div style={{ marginTop: 4 }}>
-                    {emails.map((e, i) => {
-                      const isUrgent = triage.urgent?.some(u => u.index === i + 1)
-                      const isAction = triage.action?.some(a => a.index === i + 1)
-                      const flagged = isUrgent || isAction
-                      const added = addedTaskIndices.includes(i)
-                      return (
-                        <div key={i} className="triage-item" style={{ opacity: flagged ? 1 : 0.55, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div className="triage-from">{e.from?.split("<")[0]?.trim()} · {e.source}</div>
-                            <div className="triage-subject">{e.subject}</div>
+                {showAllEmails && (() => {
+                  const globalFilters = profile.emailFilters || []
+                  const isMuted = (e) => globalFilters.some(rule => {
+                    const r = rule.toLowerCase()
+                    return e.from?.toLowerCase().includes(r) || e.subject?.toLowerCase().includes(r)
+                  })
+                  const visible = emails.map((e, i) => ({ e, i })).filter(({ e }) => !isMuted(e))
+                  const muted = emails.map((e, i) => ({ e, i })).filter(({ e }) => isMuted(e))
+                  return (
+                    <div style={{ marginTop: 4 }}>
+                      {visible.map(({ e, i }) => {
+                        const isUrgent = triage.urgent?.some(u => u.index === i + 1)
+                        const isAction = triage.action?.some(a => a.index === i + 1)
+                        const flagged = isUrgent || isAction
+                        const added = addedTaskIndices.includes(i)
+                        return (
+                          <div key={i} className="triage-item" style={{ opacity: flagged ? 1 : 0.55, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div className="triage-from">{e.from?.split("<")[0]?.trim()} · {e.source}</div>
+                              <div className="triage-subject">{e.subject}</div>
+                            </div>
+                            <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                              {!flagged && (
+                                <button className="btn-sm" style={{ fontSize: 11, padding: "5px 9px", opacity: added ? 0.5 : 1 }}
+                                  disabled={added}
+                                  onClick={() => addEmailAsTask(e, i)}>
+                                  {added ? "✓ Added" : "+ Add as task"}
+                                </button>
+                              )}
+                              <button className="btn-sm" style={{ fontSize: 11, padding: "5px 9px", color: "var(--muted)" }}
+                                title="Stop showing emails from this sender"
+                                onClick={() => muteSender(e.from)}>
+                                🔇
+                              </button>
+                            </div>
                           </div>
-                          {!flagged && (
-                            <button className="btn-sm" style={{ flexShrink: 0, fontSize: 11, padding: "5px 9px", opacity: added ? 0.5 : 1 }}
-                              disabled={added}
-                              onClick={() => addEmailAsTask(e, i)}>
-                              {added ? "✓ Added" : "+ Add as task"}
-                            </button>
+                        )
+                      })}
+
+                      {muted.length > 0 && (
+                        <>
+                          <button className="btn-sm" style={{ marginTop: 10, marginBottom: showMuted ? 10 : 0, fontSize: 11, color: "var(--muted)" }} onClick={() => setShowMuted(!showMuted)}>
+                            {showMuted ? "Hide" : "Show"} muted ({muted.length}) — kept out of triage
+                          </button>
+                          {showMuted && muted.map(({ e, i }) => (
+                            <div key={i} className="triage-item" style={{ opacity: 0.45, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div className="triage-from">{e.from?.split("<")[0]?.trim()} · {e.source}</div>
+                                <div className="triage-subject">{e.subject}</div>
+                              </div>
+                            </div>
+                          ))}
+                          {showMuted && (
+                            <p style={{ fontSize: 11, color: "var(--muted)", marginTop: 6 }}>Manage or remove mute rules in Settings → Email filter rules.</p>
                           )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
+                        </>
+                      )}
+                    </div>
+                  )
+                })()}
               </>) : (
                 <div style={{ textAlign: "center", padding: "48px 16px", color: "var(--muted)", fontSize: 14 }}>
                   <div style={{ fontSize: 32, marginBottom: 12 }}>📬</div>
