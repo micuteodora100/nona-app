@@ -649,6 +649,7 @@ export default function Nona() {
         body: JSON.stringify({
           type: "brief",
           tasks,
+          categories: getCategories(profile),
           context: {
             name: profile.name || "Teodora",
             child: profile.child || "Timothée",
@@ -1251,7 +1252,21 @@ export default function Nona() {
                 {briefLoading ? (
                   <div style={{ padding: "6px 0", fontSize: 13, color: "var(--muted)" }}>Getting your day together…</div>
                 ) : brief ? (
-                  <div style={{ fontSize: 14, lineHeight: 1.7, color: "var(--white)", whiteSpace: "pre-line" }}>{brief}</div>
+                  <div style={{ fontSize: 14, lineHeight: 1.7, color: "var(--white)" }}>
+                    {brief.split("\n").map((line, i) => {
+                      const trimmed = line.trim()
+                      if (!trimmed) return <div key={i} style={{ height: 8 }} />
+                      const isHeader = !trimmed.startsWith("•")
+                      return (
+                        <div key={i} style={isHeader
+                          ? { fontSize: 11, fontWeight: 700, color: "var(--gold)", textTransform: "uppercase", letterSpacing: "0.06em", marginTop: i === 0 ? 0 : 10, marginBottom: 2 }
+                          : {}
+                        }>
+                          {trimmed}
+                        </div>
+                      )
+                    })}
+                  </div>
                 ) : (
                   <div style={{ padding: "6px 0", fontSize: 13, color: "var(--muted)" }}>Nothing loaded yet.</div>
                 )}

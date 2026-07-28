@@ -178,13 +178,14 @@ If the text describes only one task, return an array with one item. If it's uncl
         .filter((t) => !t.done)
         .slice(0, 12)
         .map((t) => {
+          const tagLabel = t.tag ? (cats.find((c) => c.id === t.tag)?.label || t.tag) : "Other"
           if (t.date) {
             const isFuture = t.date > todayISO
             const isToday = t.date === todayISO
             const dateLabel = isToday ? "TODAY" : isFuture ? `scheduled ${t.date}` : `was due ${t.date}`
-            return `- ${t.text} [${dateLabel}]`
+            return `- [${tagLabel}] ${t.text} [${dateLabel}]`
           }
-          return `- ${t.text} [no date]`
+          return `- [${tagLabel}] ${t.text} [no date]`
         })
         .join("\n")
 
@@ -199,19 +200,21 @@ About ${context.name}:
 - Child: ${context.child}${context.creche ? ` — today: ${context.creche}` : ""}
 - Work: ${context.work || "Job search + building Nona startup"}
 
-Pending tasks (each tagged with its date status):
+Pending tasks (each tagged with its category and date status):
 ${pendingTasks || "(none)"}
 
 Email situation:
 ${emailSummary || "(no email data)"}
 
-Write ONLY a short bullet list of what needs ${context.name}'s attention TODAY. No greeting, no narrative, no encouragement, no filler.
+Write a short list of what needs ${context.name}'s attention TODAY, grouped under her own category names (choose from: ${categoryListStr}, or "Other" for anything that doesn't clearly fit one). No greeting, no narrative, no encouragement, no filler.
 
 Critical distinction: a task tagged "scheduled [future date]" is something ALREADY ARRANGED that just hasn't happened yet — like a delivery, appointment, or installation that's booked. These do NOT need action today and should NOT appear in the brief unless today IS that date, or unless there's a genuine reason to double-check it (e.g. it's within 2 days and hasn't been confirmed). Do not tell her to "check status" or "confirm" something that's simply scheduled for later — that's manufacturing work that doesn't exist.
 
 Only include: tasks tagged "TODAY", tasks tagged "was due" (overdue, needs attention), tasks with "[no date]" that are clearly things to actively do, and anything genuinely urgent from email. If a future-scheduled item is happening within the next 2 days, you may mention it as a heads-up (not an action item) — e.g. "Door installer comes Saturday" not "Confirm door installation."
 
-Maximum 5 bullets. If there's truly nothing pressing, say so in one line. Do not invent things to fill space. Format as a plain list, one item per line, starting each with "•".`
+Keep the total number of items across all groups to at most 5-6 — this is still a short daily glance, not a full task list. Do not invent things to fill space. Only show a group header if it has at least one item under it — never an empty group.
+
+Format: for each group, one header line with just the category name (no bullet, no punctuation), followed by its items on their own lines starting with "•". If there's truly nothing pressing, respond with a single line: "• Nothing pressing today."`
     }
 
     // Use Haiku for simple structured extraction (cheap), Sonnet for brief and triage (quality matters)
