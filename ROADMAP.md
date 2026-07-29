@@ -1,20 +1,21 @@
 # Nona — Product Roadmap
 
-Last updated: 29 July 2026 (reorganized — open/upcoming work now at the top, shipped/closed work moved to the end)
+Last updated: 29 July 2026, evening (natural-language command box + OneNote wiring + task history built and pushed; P1 fully clear except the PWA decision below)
 
 T-shirt sizes: XS = half day | S = 1-2 days | M = 3-5 days | L = 1-2 weeks | XL = 3-4 weeks
 Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 Status: 🟢 doable now, unblocked | 🟡 doable but depends on another row below | 🔴 blocked on something only Teodora can do (account/legal/business step) | ⚫ not feasible right now
 
-**⚠️ Correction, 29 Jul 2026 (this note itself was stale):** an earlier version of this note said the overnight 28→29 Jul work items had *not* actually landed, based on a git-history check done at 08:05 CEST that morning. That check was accurate in the moment — the feature branches existed but hadn't been merged yet — but every one of them (`feature/onenote-readonly`, `feature/context-survey`, `feature/waiting-for-replies`, `feature/google-calendar`, `feature/push-cron`) got merged to `main` within the following 10 minutes, and nobody came back to update the roadmap text afterward. Re-verified 29 Jul 2026 via `git log`/`git merge-base --is-ancestor` against both local `main` and `origin/main`: all five are merged **and already pushed to GitHub**. Waiting-for-replies, Google Calendar, and the push-cron rows below were already corrected; **AI context survey and OneNote connection (both still below in P1) were not** — see their notes for the real, current state of each.
+**Historical note on the overnight 28→29 Jul batch:** an early-morning roadmap note said those items (OneNote, context survey, waiting-for-replies, Google Calendar, push-cron) hadn't landed, based on a check done before they were merged — accurate at the time, but they all merged to `main` within the following 10 minutes and the roadmap wasn't updated after. Re-verified and corrected later that day (29 Jul): all five are confirmed merged and pushed to `origin/main` — see Shipped below for each. **Lesson for next session: verify roadmap claims against `git log`/`origin` directly rather than trusting the text here, in either direction — it can go stale within minutes of real commits landing.**
 
 ---
 
 ## 🟡 P1 — Next sprint (build now)
 
+**Nothing left to build in P1 without a decision from Teodora first** — the command box, OneNote wiring, and task history rows that used to live here are all done (see Shipped). Only the PWA row remains, and it's blocked on a choice, not on capability.
+
 | Size | Status | Feature | Notes |
 |------|--------|---------|-------|
-| — | ✅ Actually already built | **AI context survey on first open** | **Correction 29 Jul 2026**: this row previously said it was never implemented — wrong, re-verified against the actual code. `pages/app.js`'s onboarding flow does all four pieces of the spec: scans Gmail/Outlook via the existing fetch, sends it to `/api/ai` (`type: "email_patterns"`) which detects recurring sender/subject clusters, surfaces them as keep/mute choices (`obDetectedGroups`/`obGroupChoices`), and `obFinish()` pre-populates both `profile.categories` and `profile.emailFilters` from the answers. Merged to `main` via `feature/context-survey` 29 Jul 2026, already pushed to `origin/main`. Moved to Shipped below. |
 | S | 🟡 Needs a decision from Teodora | **Installable / "downloadable" app — lightweight PWA option** | Raised 29 Jul 2026 ("make it a downloadable app"). Two different things could satisfy this — worth picking one before building: **(a) PWA install / Add to Home Screen** — `public/manifest.json` and `public/sw.js` already exist (standalone display, icons, linked in `pages/_document.js`), but the service worker is currently only registered when a user opts into push notifications (`lib/push-client.js:30`), so the browser's install prompt likely won't reliably fire until that's decoupled — a quick win, no app-store step involved. **(b) True native app** — already tracked below as the XL **React Native / Expo native app** row (P3) — real phone install via App Store/Play Store, bigger build. |
 
 ---
