@@ -1,6 +1,6 @@
 # Nona — Product Roadmap
 
-Last updated: 29 July 2026, evening (natural-language command box + OneNote wiring + task history built and pushed; P1 fully clear except the PWA decision below)
+Last updated: 29 July 2026, evening (P1 fully clear — command box/OneNote wiring/task history shipped, and the PWA-vs-native-app decision resolved in favor of a full native app, tracked in P3)
 
 T-shirt sizes: XS = half day | S = 1-2 days | M = 3-5 days | L = 1-2 weeks | XL = 3-4 weeks
 Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
@@ -12,11 +12,7 @@ Status: 🟢 doable now, unblocked | 🟡 doable but depends on another row belo
 
 ## 🟡 P1 — Next sprint (build now)
 
-**Nothing left to build in P1 without a decision from Teodora first** — the command box, OneNote wiring, and task history rows that used to live here are all done (see Shipped). Only the PWA row remains, and it's blocked on a choice, not on capability.
-
-| Size | Status | Feature | Notes |
-|------|--------|---------|-------|
-| S | 🟡 Needs a decision from Teodora | **Installable / "downloadable" app — lightweight PWA option** | Raised 29 Jul 2026 ("make it a downloadable app"). Two different things could satisfy this — worth picking one before building: **(a) PWA install / Add to Home Screen** — `public/manifest.json` and `public/sw.js` already exist (standalone display, icons, linked in `pages/_document.js`), but the service worker is currently only registered when a user opts into push notifications (`lib/push-client.js:30`), so the browser's install prompt likely won't reliably fire until that's decoupled — a quick win, no app-store step involved. **(b) True native app** — already tracked below as the XL **React Native / Expo native app** row (P3) — real phone install via App Store/Play Store, bigger build. |
+**P1 is fully clear.** The command box, OneNote wiring, and task history rows that used to live here are all done (see Shipped). The one open decision — PWA install vs. a true native app — is resolved: Teodora wants the full native app (29 Jul 2026). That's tracked below as the P3 **React Native / Expo native app** row, not started yet (XL, not urgent). Nothing left to build here without a further ask.
 
 ---
 
@@ -53,7 +49,7 @@ Audited 23 Jul 2026 — everything below is confirmed genuinely not built except
 | L | 🟢 Doable now | **Partner view** | Read-only summary for partner — makes invisible labour visible. |
 | M | 🟢 Doable now | **Pending job application tracker** | "Applied to X on 15 Jun — no reply in 12 days. Follow up?" — same email-scanning approach as the Waiting for replies tracker above. |
 | L | 🔴 Blocked — business step, not code | **Nona Pro — compliance officers** | Full YC pitch built. Needs a 60-day validation sprint first — a business decision for Teodora, not something to build toward yet. |
-| XL | 🟢 Doable, just a big build | **React Native / Expo native app** | True phone install, push notifications, offline. See the lighter-weight PWA-install option raised alongside this in P1 above — same underlying ask ("downloadable app"), much smaller scope. |
+| XL | 🟢 Doable, just a big build | **React Native / Expo native app** | **Decision confirmed 29 Jul 2026**: Teodora wants the full native app, not the lighter PWA-install alternative that used to be tracked alongside this in P1 — that row is now closed in favor of this one. Not started yet; 3-4 weeks per the original estimate. Pre-work findings from an initial investigation, so a future build doesn't start from zero: (1) `getSupabaseUser()` (`lib/supabase-auth.js`) and `middleware.js` are both cookie-only auth, no `Authorization: Bearer <jwt>` fallback — a mobile client can't call the existing API at all until that's added, and `middleware.js`'s matcher already covers `/api/*` (redirects unauthenticated requests to `/login` instead of a clean 401, which also needs to change for API paths). (2) OAuth tokens are keyed by Supabase `auth_user_id`, not NextAuth session, so a mobile-authenticated user correctly sees Gmail/Outlook tokens connected via the web app — no identity rework needed there; simplest v1 is likely to keep the Gmail/Outlook *connect* flow web-only (it already works) rather than reimplement NextAuth's redirect OAuth natively. (3) Push notifications: `push_subscriptions` stores a raw Web Push object with no type discriminator — Expo push tokens are a different shape (opaque string) and need a new column plus branching send logic in `pages/api/cron/morning-brief.js` (web-push lib vs. Expo's push API). (4) No monorepo tooling exists yet (no turborepo/nx/workspaces) — Vercel won't touch a new top-level `mobile/` folder on its own, but `.gitignore`'s `/node_modules` is root-anchored only and would need `**/node_modules` to also cover a nested `mobile/node_modules`. |
 | M | ⚫ Not feasible right now | **WhatsApp group summariser** | WhatsApp Cloud API requires Meta Business verification, a dedicated registered phone number, and app review/approval for the relevant message permissions — heavy external gatekeeping disproportionate to a personal-use feature. Not something to queue until there's a real business reason to go through Meta's approval process. |
 | XL | 🟢 Doable, just a big build | **Multi-language UI (FR, DE, RO)** | Voice input works in these languages already; full UI localisation is separate. |
 | XL | 🔴 Blocked — legal/business steps, time-sensitive | **Fit4Start application** | Next cohort — needs a team of 2, a Luxembourg SARL registered, a working prototype, and 1 letter of intent — all things only Teodora (+ a co-founder) can do. Deadline is ~August 2026, i.e. close — flagging in case it needs to move up in priority. |
