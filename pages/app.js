@@ -4,6 +4,7 @@ import Head from "next/head"
 import { supabase } from "../lib/supabase"
 import { subscribeToPush, unsubscribeFromPush, getPushPermissionState } from "../lib/push-client"
 import { getCategories, categoryLabel, slugifyCategoryId, noteColor, nextNoteColor } from "../lib/categories"
+import { DESTRUCTIVE_ACTIONS } from "../lib/actions"
 
 // ── helpers ──────────────────────────────────────────────────────────────
 const STORAGE_KEY = "nona_v2"
@@ -710,6 +711,122 @@ export default function Nona() {
   const [newRecurringText, setNewRecurringText] = useState("")
   const [newRecurringDays, setNewRecurringDays] = useState([])
 
+  // ── natural-language command box ────────────────────────────────────
+  // Separate input from the "Speak or type what's on your mind" capture box
+  // above (which always creates new tasks from free text) — see ROADMAP.md
+  // P1 "Natural-language command box". Maps a typed instruction to one of
+  // the explicit actions in lib/actions.js via /api/ai/command, then always
+  // shows a confirm/cancel step before actually applying it — including for
+  // non-destructive actions, so nothing ever fires straight off a single AI
+  // guess at intent.
+  const [cmdInput, setCmdInput] = useState("")
+  const [cmdBusy, setCmdBusy] = useState(false)
+  const [cmdMessage, setCmdMessage] = useState("")
+  const [cmdPendingAction, setCmdPendingAction] = useState(null) // { action, params } awaiting confirm
+
+  function validateCommandAction(action, params) {
+    if (action === "edit_task" || action === "delete_task") {
+      if (!params.taskId || !tasks.some(t => t.id === params.taskId)) {
+        return { ok: false, error: "Nona picked a task that doesn't match anything in your list — try rephrasing more specifically." }
+      }
+    }
+    if (action === "add_task" && !params.text?.trim()) {
+      return { ok: false, error: "Couldn't figure out what task to add — try rephrasing." }
+    }
+    if (action === "mute_sender" && !params.sender?.trim()) {
+      return { ok: false, error: "Couldn't figure out who to mute — try rephrasing." }
+    }
+    if (action === "change_setting") {
+      if (params.setting !== "briefTime") {
+        return { ok: false, error: `"${params.setting}" isn't a setting Nona can change yet.` }
+      }
+      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(params.value || "")) {
+        return { ok: false, error: "That doesn't look like a valid time (expected HH:MM)." }
+      }
+    }
+    if ((action === "add_task" || action === "edit_task") && params.date && !/^\d{4}-\d{2}-\d{2}$/.test(params.date)) {
+      return { ok: false, error: "Nona resolved an invalid date — try rephrasing with a clearer date." }
+    }
+    return { ok: true }
+  }
+
+  async function submitCommand() {
+    const instruction = cmdInput.trim()
+    if (!instruction) return
+    setCmdBusy(true)
+    setCmdMessage("")
+    setCmdPendingAction(null)
+    try {
+      const r = await fetch("/api/ai/command", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instruction, tasks, categories: getCategories(profile) }),
+      })
+      const d = await r.json()
+      if (!r.ok || d.error) {
+        setCmdMessage(d.error || "Couldn't understand that — try again.")
+        setCmdBusy(false)
+        return
+      }
+      if (d.action === "unrecognized") {
+        setCmdMessage(d.params?.reason || "Nona couldn't map that to an action.")
+        setCmdInput("")
+        setCmdBusy(false)
+        return
+      }
+      const validation = validateCommandAction(d.action, d.params || {})
+      if (!validation.ok) {
+        setCmdMessage(validation.error)
+        setCmdBusy(false)
+        return
+      }
+      setCmdPendingAction({ action: d.action, params: d.params })
+      setCmdInput("")
+    } catch (e) {
+      setCmdMessage("Couldn't reach Nona — try again.")
+    }
+    setCmdBusy(false)
+  }
+
+  // Actually applies a confirmed action. Only ever called from the confirm
+  // button below — never automatically from submitCommand's response.
+  function confirmCommandAction() {
+    const pending = cmdPendingAction
+    if (!pending) return
+    const { action, params } = pending
+    if (action === "add_task") {
+      setTasks(prev => [{
+        id: String(Date.now() + Math.random()), text: params.text, date: params.date || null,
+        done: false, tag: params.tag || guessTag(params.text) || null,
+      }, ...prev])
+    } else if (action === "edit_task") {
+      const updates = {}
+      if (params.text !== undefined) updates.text = params.text
+      if (params.date !== undefined) updates.date = params.date === "" ? null : params.date
+      if (params.tag !== undefined) updates.tag = params.tag === "" ? null : params.tag
+      if (params.done !== undefined) updates.done = !!params.done
+      updateTask(params.taskId, updates)
+    } else if (action === "delete_task") {
+      deleteTask(params.taskId)
+    } else if (action === "mute_sender") {
+      const address = params.sender.trim().toLowerCase()
+      setProfile(p => {
+        const existing = p.emailFilters || []
+        if (existing.some(rule => rule.toLowerCase() === address)) return p
+        return { ...p, emailFilters: [...existing, address] }
+      })
+    } else if (action === "change_setting" && params.setting === "briefTime") {
+      setProfile(p => ({ ...p, briefTime: params.value }))
+    }
+    setCmdMessage("Done.")
+    setCmdPendingAction(null)
+  }
+
+  function cancelCommandAction() {
+    setCmdPendingAction(null)
+    setCmdMessage("")
+  }
+
   function addRecurring() {
     const text = newRecurringText.trim()
     if (!text || newRecurringDays.length === 0) return
@@ -1306,6 +1423,85 @@ export default function Nona() {
                     ))}
                   </div>
                 )}
+              </div>
+
+              {/* Natural-language command box — maps a typed instruction to one
+                  of a small explicit set of app actions (add/edit/delete task,
+                  mute a sender, change a setting) via Claude tool-calling, not
+                  open-ended execution. Deliberately a separate box from "Speak
+                  or type what's on your mind" above: that box always creates
+                  new tasks from free text, so folding "delete the dentist task"
+                  into the same input would be ambiguous between adding a task
+                  literally titled that and an actual delete command. See
+                  ROADMAP.md P1 "Natural-language command box". */}
+              <div style={{ marginBottom: 20 }}>
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  background: "var(--surface)", border: "1px solid var(--border)",
+                  borderRadius: 14, padding: "8px 8px 8px 18px", boxShadow: "var(--shadow)",
+                }}>
+                  <input
+                    className="input"
+                    style={{ flex: 1, background: "transparent", border: "none", padding: "8px 0" }}
+                    value={cmdInput}
+                    onChange={e => setCmdInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter" && !cmdBusy) { e.preventDefault(); submitCommand() } }}
+                    disabled={cmdBusy}
+                    placeholder={cmdBusy ? "Thinking…" : "Tell Nona to do something — mute a sender, edit or delete a task, change a setting…"}
+                  />
+                  <button
+                    onClick={submitCommand}
+                    disabled={cmdBusy || !cmdInput.trim()}
+                    style={{
+                      width: 40, height: 40, borderRadius: "50%", flexShrink: 0, cursor: "pointer",
+                      background: cmdInput.trim() ? "var(--gold)" : "var(--gold-dim)",
+                      border: cmdInput.trim() ? "none" : "1.5px solid var(--gold-mid)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      opacity: cmdBusy ? 0.6 : 1, transition: "all 0.2s",
+                    }}
+                  >
+                    {cmdBusy ? (
+                      <span className="typing"><span /><span /><span /></span>
+                    ) : (
+                      <svg viewBox="0 0 24 24" fill="none" stroke={cmdInput.trim() ? "#FFFFFF" : "var(--gold)"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16">
+                        <path d="M4 4l16 8-16 8 4-8-4-8z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+
+                {!cmdPendingAction && cmdMessage && (
+                  <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8, padding: "0 4px" }}>{cmdMessage}</div>
+                )}
+
+                {cmdPendingAction && (() => {
+                  const destructive = DESTRUCTIVE_ACTIONS.has(cmdPendingAction.action)
+                  return (
+                    <div className="card" style={{
+                      marginTop: 10, marginBottom: 0,
+                      borderColor: destructive ? "rgba(232,122,122,0.4)" : "var(--border)",
+                    }}>
+                      <div style={{ fontSize: 11, color: destructive ? "#e87a7a" : "var(--gold)", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 8 }}>
+                        {destructive ? "⚠ Confirm — can't be easily undone" : "Confirm"}
+                      </div>
+                      <div style={{ fontSize: 14, color: "var(--white)", marginBottom: 14, lineHeight: 1.5 }}>
+                        {cmdPendingAction.params.summary}
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                          className="btn-sm"
+                          style={{ flex: 1, justifyContent: "center", padding: "10px 12px", ...(destructive ? { color: "#e87a7a", borderColor: "rgba(232,122,122,0.4)" } : {}) }}
+                          onClick={confirmCommandAction}
+                        >
+                          {destructive ? "Yes, do it" : "Confirm"}
+                        </button>
+                        <button className="btn-sm" style={{ flex: 1, justifyContent: "center", padding: "10px 12px" }} onClick={cancelCommandAction}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })()}
               </div>
 
               {/* Morning brief — everything that needs attention today */}
