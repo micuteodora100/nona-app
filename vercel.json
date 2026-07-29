@@ -5,6 +5,13 @@
   "functions": {
     "pages/api/email/gmail.js": { "maxDuration": 30 },
     "pages/api/email/outlook.js": { "maxDuration": 30 },
-    "pages/api/ai/index.js": { "maxDuration": 30 }
-  }
+    "pages/api/ai/index.js": { "maxDuration": 30 },
+    "pages/api/cron/morning-brief.js": { "maxDuration": 60 }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/morning-brief",
+      "schedule": "0 5 * * *"
+    }
+  ]
 }
