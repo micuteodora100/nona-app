@@ -1,5 +1,5 @@
-import { useState } from "react"
 import Link from "next/link"
+import { track } from "@vercel/analytics"
 import MarketingLayout from "../components/MarketingLayout"
 
 // Illustrative example tasks for the hero mockup — deliberately generic,
@@ -11,88 +11,31 @@ const MOCK_TASKS = [
   { text: "Reply to school re: trip", tag: "Applications", color: "#CFE0F3", rot: 2 },
 ]
 
-const FEATURES = [
+const CATEGORIES = ["Email", "Calendar", "Tasks", "Bookings"]
+
+const EXAMPLES = [
   {
-    title: "Daily brief",
-    body: "One list of what actually needs attention today, generated fresh every morning — not a wall of unread everything.",
+    before: "School: reminder that children need a red T-shirt for Friday's summer show.",
+    after: "🔴 Buy/pack red T-shirt — by Thursday",
   },
   {
-    title: "Email triage",
-    body: "Gmail and Outlook read and summarized, action items pulled out automatically. Read-only — Nona never sends, deletes, or stores your emails.",
+    before: "Airline: online check-in opens 30 July.",
+    after: "✈️ Check in tomorrow",
   },
   {
-    title: "Tasks & calendar",
-    body: "Speak or type in plain language. Nona parses dates, categorizes automatically, and slots it into the week view — flights and bookings included.",
-  },
-  {
-    title: "Proactive reminders",
-    body: "Push notifications surface what matters without you having to open the app and check.",
+    before: "Daycare: a 900-word newsletter, buried somewhere in there.",
+    after: "📸 Photo day Tuesday — bring child before 9:00",
   },
 ]
 
 const STEPS = [
-  {
-    n: "01",
-    title: "Connect your inbox",
-    body: "Link Gmail and/or Outlook, read-only. One-time setup, a couple of clicks.",
-  },
-  {
-    n: "02",
-    title: "Speak or type what's on your mind",
-    body: "\"Pay the daycare invoice by Friday.\" Nona parses the date and category — no forms, no dropdowns.",
-  },
-  {
-    n: "03",
-    title: "Get a daily brief, not a pile of email",
-    body: "Every morning, one list of what actually needs your attention — pulled from your inbox, your tasks, and your calendar.",
-  },
+  { n: "01", title: "Connect", body: "Link Gmail and/or Outlook, read-only. A couple of clicks, once." },
+  { n: "02", title: "Nona finds", body: "Reads what comes in and works out what actually needs attention — no manual sorting, nothing for you to check." },
+  { n: "03", title: "Nona reminds", body: "One brief every morning, plus a push notification when something's genuinely time-sensitive." },
 ]
 
-const ASKS = [
-  {
-    q: "\"Anything urgent in my inbox?\"",
-    a: "Nona reads unread mail from the last 48 hours and surfaces only what needs a decision or a reply — not the noise.",
-  },
-  {
-    q: "\"Pick up the kids' passports renewal, remind me in 6 weeks.\"",
-    a: "Parsed into a dated, categorized task automatically — spoken or typed, either way.",
-  },
-  {
-    q: "\"What's this week look like?\"",
-    a: "Week view with tasks and auto-detected events — flight confirmations and bookings pulled straight from email.",
-  },
-]
-
-const FAQS = [
-  {
-    q: "Is my email data safe?",
-    a: "Nona reads your inbox live via OAuth and never stores email content — it's processed in memory per request only. Access is read-only: Nona cannot send, delete, or modify anything in your inbox.",
-  },
-  {
-    q: "What does Nona connect to right now?",
-    a: "Gmail and Outlook today, read-only. More integrations are on the roadmap, not yet built.",
-  },
-  {
-    q: "Is this a finished product?",
-    a: "No — it's an MVP in active development, built solo. Core flows (brief, tasks, calendar, email triage) work end-to-end today; multi-user support and additional integrations are in progress.",
-  },
-  {
-    q: "Can other people use it besides you?",
-    a: "Not broadly yet — that's explicitly the current focus. Sign-in works, but the underlying multi-user data isolation is still being hardened before opening it up further.",
-  },
-]
-
-function Faq({ q, a }) {
-  const [open, setOpen] = useState(false)
-  return (
-    <div className="faq-item" onClick={() => setOpen(o => !o)}>
-      <div className="faq-q">
-        <span>{q}</span>
-        <span className="faq-toggle">{open ? "–" : "+"}</span>
-      </div>
-      {open && <div className="faq-a">{a}</div>}
-    </div>
-  )
+function trackClick(name, location) {
+  try { track(name, { location }) } catch {}
 }
 
 export default function Landing() {
@@ -100,17 +43,25 @@ export default function Landing() {
     <MarketingLayout>
       <div className="hero">
         <div className="hero-copy">
-          <div className="eyebrow">Your personal AI</div>
-          <h1>The mental load of running a household — <em>handled</em>.</h1>
+          <h1>Nona remembers everything so you <em>don't have to</em>.</h1>
           <p className="sub">
-            Nona brings tasks, schedules, email, and family logistics into one daily view,
-            using AI to surface what needs attention rather than requiring you to manually
-            organize everything.
+            Emails. Appointments. School messages. Bookings. Deadlines. One brief of
+            what actually needs your attention.
           </p>
           <div className="cta-row">
-            <Link className="btn-primary" href="/login">Sign in</Link>
+            <Link
+              className="btn-primary"
+              href="/login?mode=signup"
+              onClick={() => trackClick("try_nona_click", "hero")}
+            >
+              Try Nona
+            </Link>
           </div>
-          <div className="status-line">MVP in active development — built independently, using Next.js, Supabase, Claude, and Vercel.</div>
+          <div className="hero-note">
+            Read-only — Nona can't send, delete, or store your email.{" "}
+            <Link href="/privacy">How Nona handles your data →</Link>
+          </div>
+          <div className="hero-meta">Early access.</div>
         </div>
 
         <div className="mock" aria-hidden="true">
@@ -141,34 +92,53 @@ export default function Landing() {
       </div>
 
       <section className="block" id="what-it-does">
-        <h2>What Nona does</h2>
-        <p className="lead">One flow, not five separate apps to keep checking.</p>
+        <h2>Your life is already organized. Just badly.</h2>
+        <p className="lead">
+          Scattered across five different inboxes and apps instead of one place.
+        </p>
         <div className="flow">
-          <span className="flow-pill">Daily brief</span>
-          <span className="flow-arrow">→</span>
-          <span className="flow-pill">Tasks</span>
-          <span className="flow-arrow">→</span>
-          <span className="flow-pill">Calendar</span>
-          <span className="flow-arrow">→</span>
-          <span className="flow-pill">Email triage</span>
-          <span className="flow-arrow">→</span>
-          <span className="flow-pill">Household logistics</span>
-          <span className="flow-arrow">→</span>
-          <span className="flow-pill">Proactive reminders</span>
+          {CATEGORIES.map(c => (
+            <span className="flow-pill" key={c}>{c}</span>
+          ))}
         </div>
-        <div className="grid">
-          {FEATURES.map(f => (
-            <div className="card" key={f.title}>
-              <h3>{f.title}</h3>
-              <p>{f.body}</p>
+      </section>
+
+      <section className="block">
+        <h2>Nona finds what needs doing</h2>
+        <p className="lead">You shouldn't have to ask. It should just be there.</p>
+        <div className="examples">
+          {EXAMPLES.map(x => (
+            <div className="example" key={x.before}>
+              <div className="example-before">
+                <span className="example-label">Comes in as</span>
+                {x.before}
+              </div>
+              <span className="example-arrow">→</span>
+              <div className="example-after">
+                <span className="example-label">Nona notices</span>
+                {x.after}
+              </div>
             </div>
           ))}
         </div>
       </section>
 
+      <section className="block">
+        <h2>Every morning, one brief</h2>
+        <p className="lead">Pulled from your inbox, your tasks, and your calendar — before you've opened any of them.</p>
+        <div className="brief-showcase">
+          <div className="brief-card">
+            <div className="brief-card-label">Today's brief</div>
+            <div className="brief-card-item">Daycare invoice due Friday</div>
+            <div className="brief-card-item">Flight to Nice — check in at 6pm</div>
+            <div className="brief-card-item">School: red T-shirt needed by Thursday</div>
+            <div className="brief-card-item">2 unread emails need a reply</div>
+          </div>
+        </div>
+      </section>
+
       <section className="block" id="how-it-works">
-        <h2>Three steps. No manual organizing.</h2>
-        <p className="lead">Nona does the reading and sorting — you just tell it what's on your mind.</p>
+        <h2>How it works</h2>
         <div className="steps">
           {STEPS.map(s => (
             <div className="step" key={s.n}>
@@ -181,63 +151,50 @@ export default function Landing() {
       </section>
 
       <section className="block">
-        <h2>Things you can ask Nona</h2>
-        <p className="lead">Spoken or typed — same AI parsing either way.</p>
-        <div className="asks">
-          {ASKS.map(x => (
-            <div className="ask" key={x.q}>
-              <div className="ask-q">{x.q}</div>
-              <div className="ask-a">{x.a}</div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="block">
-        <h2>Works with</h2>
-        <div className="works-with">
-          <span className="chip">Gmail</span>
-          <span className="chip">Outlook</span>
-          <span className="chip-muted">More integrations on the roadmap</span>
-        </div>
-      </section>
-
-      <section className="block">
-        <h2>Built for the person holding it all together</h2>
-        <p className="lead">
-          Dual-income households, working parents, anyone whose day runs across five
-          different inboxes and apps instead of one place — Nona is for the invisible
-          coordination work that never shows up on anyone's to-do list except yours.
+        <h2>Privacy</h2>
+        <p className="body-text">
+          Nona reads your inbox live over a read-only connection — it can't send, delete,
+          or modify anything. Email content isn't stored: it's processed in memory to
+          build your brief, then discarded.
+        </p>
+        <p className="body-text">
+          <Link href="/privacy" style={{ color: "var(--coral)", fontWeight: 600 }}>Read the full privacy policy →</Link>
         </p>
       </section>
 
       <section className="block founder">
         <div className="founder-quote">
+          <p className="founder-intro">I built this because I had this problem too.</p>
           <p>
-            I built Nona because I was the default household coordinator — tasks, kids'
-            appointments, flights, bills — scattered across email, a notes app, and my own
-            memory. I wanted one place that told me what actually needed doing today,
-            without me having to go looking for it.
+            I was the default household coordinator — tasks, kids' appointments, flights,
+            bills — scattered across email, a notes app, and my own memory. I wanted one
+            place that told me what actually needed doing today, without me having to go
+            looking for it.
           </p>
           <div className="founder-sig">— the founder, building Nona solo · <Link href="/about">more about Nona</Link></div>
         </div>
       </section>
 
-      <section className="block" id="faq">
-        <h2>Questions</h2>
-        <div className="faq-list">
-          {FAQS.map(f => <Faq key={f.q} q={f.q} a={f.a} />)}
-        </div>
+      <section className="block final-cta">
+        <h2>Try Nona</h2>
+        <p className="lead">Free during early access.</p>
+        <Link
+          className="btn-primary"
+          href="/login?mode=signup"
+          onClick={() => trackClick("try_nona_click", "final_cta")}
+        >
+          Try Nona
+        </Link>
       </section>
 
       <style jsx>{`
         .hero { display: flex; align-items: center; gap: 56px; padding: 48px 0 96px; flex-wrap: wrap; }
         .hero-copy { flex: 1 1 420px; min-width: 300px; }
-        .eyebrow { font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--coral);
-          font-weight: 600; margin-bottom: 18px; }
         .sub { font-size: 17px; line-height: 1.6; color: var(--muted); max-width: 480px; margin-bottom: 32px; }
-        .cta-row { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin-bottom: 20px; }
-        .status-line { font-size: 13px; color: var(--muted); }
+        .cta-row { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin-bottom: 16px; }
+        .hero-note { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+        .hero-note :global(a) { color: var(--coral); font-weight: 600; }
+        .hero-meta { font-size: 12px; color: var(--muted); opacity: 0.8; }
 
         .mock { flex: 1 1 380px; min-width: 300px; position: relative; height: 380px; }
         .mock-brief { background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
@@ -253,38 +210,39 @@ export default function Landing() {
         .mock-note-tag { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
           color: rgba(42,39,51,0.5); margin-top: 6px; font-weight: 700; }
 
-        .flow { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 52px; }
+        .flow { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
         .flow-pill { background: var(--surface); border: 1px solid var(--border); border-radius: 20px;
           padding: 9px 16px; font-size: 13px; font-weight: 600; }
-        .flow-arrow { color: var(--coral); font-size: 15px; }
+
+        .examples { display: flex; flex-direction: column; gap: 16px; }
+        .example { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 22px 24px;
+          display: flex; gap: 20px; flex-wrap: wrap; align-items: center; }
+        .example-label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+          color: var(--muted); font-weight: 700; margin-bottom: 6px; }
+        .example-before { flex: 1 1 280px; font-size: 14px; line-height: 1.6; color: var(--muted); }
+        .example-after { flex: 1 1 280px; font-size: 17px; font-weight: 700; color: var(--ink); }
+        .example-arrow { color: var(--coral); font-size: 20px; flex: 0 0 auto; }
+
+        .brief-showcase { display: flex; justify-content: center; }
+        .brief-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+          padding: 28px 32px; box-shadow: 0 12px 30px rgba(42,39,51,0.08); max-width: 420px; width: 100%; }
+        .brief-card-label { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--coral);
+          font-weight: 700; margin-bottom: 14px; }
+        .brief-card-item { font-size: 15px; color: var(--ink); padding: 10px 0; border-bottom: 1px solid var(--border); }
+        .brief-card-item:last-child { border-bottom: none; }
 
         .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 28px; }
         .step-n { font-family: 'Instrument Serif', serif; font-size: 40px; color: var(--coral-mid); margin-bottom: 8px; }
         .step p { font-size: 14px; line-height: 1.6; color: var(--muted); }
 
-        .asks { display: flex; flex-direction: column; gap: 16px; }
-        .ask { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 22px 24px;
-          display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
-        .ask-q { font-family: 'Instrument Serif', serif; font-style: italic; font-size: 18px; color: var(--ink);
-          flex: 1 1 260px; }
-        .ask-a { flex: 1 1 300px; font-size: 14px; line-height: 1.6; color: var(--muted); }
-
-        .works-with { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
-        .chip { background: var(--surface); border: 1px solid var(--border); border-radius: 20px;
-          padding: 10px 18px; font-size: 14px; font-weight: 700; }
-        .chip-muted { font-size: 13px; color: var(--muted); font-weight: 500; }
-
         .founder { display: flex; gap: 32px; flex-wrap: wrap; align-items: flex-start; }
         .founder-quote { flex: 1 1 500px; font-size: 18px; line-height: 1.7; color: var(--ink); }
+        .founder-intro { font-family: 'Instrument Serif', serif; font-style: italic; font-size: 22px; color: var(--coral); margin-bottom: 18px; }
         .founder-quote p { margin-bottom: 16px; }
         .founder-sig { font-size: 13px; color: var(--muted); margin-top: 8px; }
         .founder-sig :global(a) { color: var(--coral); font-weight: 600; }
 
-        .faq-list { display: flex; flex-direction: column; }
-        .faq-item { border-bottom: 1px solid var(--border); padding: 20px 0; cursor: pointer; }
-        .faq-q { display: flex; align-items: center; justify-content: space-between; font-size: 16px; font-weight: 700; gap: 20px; }
-        .faq-toggle { color: var(--coral); font-size: 18px; font-weight: 700; flex-shrink: 0; }
-        .faq-a { font-size: 14px; line-height: 1.6; color: var(--muted); margin-top: 12px; max-width: 640px; }
+        .final-cta { text-align: center; display: flex; flex-direction: column; align-items: center; }
       `}</style>
     </MarketingLayout>
   )

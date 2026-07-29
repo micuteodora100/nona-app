@@ -3,8 +3,8 @@ import Link from "next/link"
 import MailingListForm from "./MailingListForm"
 
 export default function MarketingLayout({ title, description, children }) {
-  const fullTitle = title ? `${title} — Nona` : "Nona — Your personal AI for running a household"
-  const fullDescription = description || "Nona brings tasks, schedules, email, and family logistics into one daily view — so you don't have to hold it all in your head."
+  const fullTitle = title ? `${title} — Nona` : "Nona — remembers everything so you don't have to"
+  const fullDescription = description || "Emails, appointments, school messages, bookings, deadlines — one brief of what actually needs your attention."
 
   return (
     <>
@@ -78,7 +78,6 @@ export default function MarketingLayout({ title, description, children }) {
             <Link href="/#what-it-does">What it does</Link>
             <Link href="/#how-it-works">How it works</Link>
             <Link href="/about">About</Link>
-            <Link href="/#faq">FAQ</Link>
           </div>
           <div className="nav-right">
             <Link className="nav-cta" href="/login">Sign in</Link>
@@ -99,7 +98,6 @@ export default function MarketingLayout({ title, description, children }) {
                 <div className="foot-col-title">Product</div>
                 <Link href="/#what-it-does">What it does</Link>
                 <Link href="/#how-it-works">How it works</Link>
-                <Link href="/#faq">FAQ</Link>
               </div>
               <div className="foot-col">
                 <div className="foot-col-title">Company</div>

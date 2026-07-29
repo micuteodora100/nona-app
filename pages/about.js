@@ -19,9 +19,9 @@ export default function About() {
           and calendar — so you don't have to go looking for it.
         </p>
         <p className="body-text">
-          Nona is an MVP in active development. The core flows — daily brief, tasks,
-          calendar, email triage — work end-to-end today. Multi-user support and
-          additional integrations are still being built out.
+          Nona is in early access, built and run by one person. The core flows — daily
+          brief, tasks, calendar, email triage — work end-to-end today, with multi-user
+          support in place. More integrations are on the roadmap.
         </p>
       </section>
 

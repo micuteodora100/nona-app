@@ -23,6 +23,11 @@ export default function Login() {
     })
   }, [])
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get("mode") === "signup") setMode("signup")
+  }, [])
+
   async function handleLogin(e) {
     e.preventDefault()
     setError(""); setMessage(""); setLoading(true)
