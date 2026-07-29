@@ -170,6 +170,8 @@ export default function Nona() {
   const [supabaseUser, setSupabaseUser] = useState(null)
   const [pushEnabled, setPushEnabled] = useState(false)
   const [pushBusy, setPushBusy] = useState(false)
+  const [providers, setProviders] = useState({}) // {google: {connected, email}, microsoft: {...}} — from oauth_tokens, not the NextAuth session
+  const [onenoteStatus, setOnenoteStatus] = useState(null) // null = not checked yet, else {connected, scopeOk, error}
 
   // Listen for Supabase auth state changes. localStorage is a single
   // browser-wide key, not scoped per account — on a shared device, if the
@@ -328,8 +330,6 @@ export default function Nona() {
     try { return new Set(JSON.parse(localStorage.getItem("nona_handled_emails") || "[]")) }
     catch { return new Set() }
   })
-  const [providers, setProviders] = useState({}) // {google: {connected, email}, microsoft: {...}} — from oauth_tokens, not the NextAuth session
-  const [onenoteStatus, setOnenoteStatus] = useState(null) // null = not checked yet, else {connected, scopeOk, error}
 
   const [waitingReplies, setWaitingReplies] = useState(null) // null = not checked yet
   const [waitingLoading, setWaitingLoading] = useState(false)
