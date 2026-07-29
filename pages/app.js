@@ -207,6 +207,15 @@ export default function Nona() {
     else setProviders({})
   }, [supabaseUser])
 
+  // OneNote rides on the same Microsoft connection as Outlook (no separate
+  // connect flow) — check scope status whenever Outlook is connected so
+  // Settings can tell "connected" apart from "connected but pre-dates
+  // Notes.Read, needs reconnect".
+  useEffect(() => {
+    if (providers?.microsoft) fetchOnenoteStatus()
+    else setOnenoteStatus(null)
+  }, [providers?.microsoft])
+
   useEffect(() => {
     getPushPermissionState().then((state) => setPushEnabled(state === "granted"))
   }, [])
@@ -303,6 +312,7 @@ export default function Nona() {
     catch { return new Set() }
   })
   const [providers, setProviders] = useState({}) // {google: {connected, email}, microsoft: {...}} — from oauth_tokens, not the NextAuth session
+  const [onenoteStatus, setOnenoteStatus] = useState(null) // null = not checked yet, else {connected, scopeOk, error}
 
   const [taskInput, setTaskInput] = useState("")
   const [taskFilter, setTaskFilter] = useState("all")
@@ -437,6 +447,16 @@ export default function Nona() {
       setProviders(d.providers || {})
     } catch (e) {
       console.error("Failed to load provider status:", e.message)
+    }
+  }
+
+  async function fetchOnenoteStatus() {
+    try {
+      const r = await fetch("/api/notes/onenote-status")
+      const d = await r.json()
+      setOnenoteStatus(d)
+    } catch (e) {
+      console.error("Failed to load OneNote status:", e.message)
     }
   }
 
@@ -1870,6 +1890,26 @@ export default function Nona() {
                 <div className="settings-row">
                   <div style={{ fontSize: 14 }}>Outlook not connected</div>
                   <button className="btn-sm" onClick={() => signIn("microsoft")}>Connect →</button>
+                </div>
+              )}
+
+              {providers?.microsoft && (
+                <div className="settings-row">
+                  <div>
+                    <div style={{ fontSize: 14 }}>
+                      {!onenoteStatus ? "OneNote — checking…" : onenoteStatus.scopeOk ? "OneNote connected ✓" : "⚠ OneNote needs reconnect"}
+                    </div>
+                    <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                      {!onenoteStatus
+                        ? "Read-only, via your Outlook connection"
+                        : onenoteStatus.scopeOk
+                        ? "Read-only, via your Outlook connection"
+                        : "Your Outlook connection predates OneNote access — reconnect to grant it"}
+                    </div>
+                  </div>
+                  {onenoteStatus && !onenoteStatus.scopeOk && (
+                    <button className="btn-sm" onClick={() => signIn("microsoft")}>Reconnect →</button>
+                  )}
                 </div>
               )}
 
