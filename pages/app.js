@@ -208,6 +208,11 @@ export default function Nona() {
   }, [supabaseUser])
 
   useEffect(() => {
+    if (providers?.google?.connected) fetchGoogleCalendar()
+    else { setCalendarEvents([]); setCalendarError(null) }
+  }, [providers?.google?.connected])
+
+  useEffect(() => {
     getPushPermissionState().then((state) => setPushEnabled(state === "granted"))
   }, [])
 
@@ -286,6 +291,8 @@ export default function Nona() {
   const [tasks, setTasks] = useState([])
   const [tab, setTab] = useState("home") // home | tasks | mail | settings
   const [weekOffset, setWeekOffset] = useState(0) // weeks from current week
+  const [calendarEvents, setCalendarEvents] = useState([]) // real Google Calendar events, read-only, merged into the week view
+  const [calendarError, setCalendarError] = useState(null) // e.g. "reconnect Google" when the stored token predates the calendar.readonly scope
 
   const [weather, setWeather] = useState(null)
   const [brief, setBrief] = useState(null)
@@ -437,6 +444,24 @@ export default function Nona() {
       setProviders(d.providers || {})
     } catch (e) {
       console.error("Failed to load provider status:", e.message)
+    }
+  }
+
+  // ── calendar (read-only Google Calendar events, merged into the week view) ──
+  async function fetchGoogleCalendar() {
+    try {
+      const r = await fetch("/api/calendar/google")
+      const d = await r.json()
+      if (!r.ok || d.error) {
+        setCalendarEvents([])
+        setCalendarError(d.reconnectRequired ? "Reconnect Google in Settings to see your calendar" : (d.error || "Could not load calendar"))
+        return
+      }
+      setCalendarEvents(d.events || [])
+      setCalendarError(null)
+    } catch (e) {
+      setCalendarEvents([])
+      setCalendarError("Could not load calendar: " + e.message)
     }
   }
 
@@ -816,8 +841,9 @@ export default function Nona() {
       d.setDate(monday.getDate() + i)
       const iso = toISODate(d)
       const isToday = iso === toISODate(today)
-      const dayTasks = tasks.filter(t => t.date === iso && !t.done)
-      days.push({ date: d, iso, isToday, label: d.toLocaleDateString("en-GB", { weekday: "short" })[0], num: d.getDate(), tasks: dayTasks })
+      const dayTasks = tasks.filter(t => t.date === iso && !t.done).map(t => ({ ...t, source: "task" }))
+      const dayCalendarEvents = calendarEvents.filter(e => e.date === iso).map(e => ({ ...e, source: "google" }))
+      days.push({ date: d, iso, isToday, label: d.toLocaleDateString("en-GB", { weekday: "short" })[0], num: d.getDate(), tasks: [...dayTasks, ...dayCalendarEvents] })
     }
     return days
   }
@@ -1395,13 +1421,24 @@ export default function Nona() {
                   <div style={{ marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
                     {getWeekDays(weekOffset).filter(d => d.tasks.length > 0).map(d => (
                       d.tasks.map(t => (
-                        <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", fontSize: 13 }}>
-                          <div style={{ width: 6, height: 6, borderRadius: "50%", background: d.isToday ? "var(--gold)" : "rgba(255,107,74,0.5)", flexShrink: 0 }} />
+                        <div key={`${t.source}-${t.id}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", fontSize: 13 }}>
+                          {t.source === "google" ? (
+                            <svg viewBox="0 0 24 24" fill="none" stroke={d.isToday ? "var(--gold)" : "rgba(255,107,74,0.7)"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="12" height="12" style={{ flexShrink: 0 }}>
+                              <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
+                            </svg>
+                          ) : (
+                            <div style={{ width: 6, height: 6, borderRadius: "50%", background: d.isToday ? "var(--gold)" : "rgba(255,107,74,0.5)", flexShrink: 0 }} />
+                          )}
                           <div style={{ width: 44, flexShrink: 0, color: "var(--muted)", fontSize: 12 }}>{d.isToday ? "Today" : d.date.toLocaleDateString("en-GB", { weekday: "short" })}</div>
-                          <div style={{ color: "var(--white)" }}>{t.text}</div>
+                          <div style={{ color: "var(--white)" }}>{t.text}{t.source === "google" && t.time ? ` · ${t.time}` : ""}</div>
                         </div>
                       ))
                     ))}
+                  </div>
+                )}
+                {calendarError && (
+                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)", fontSize: 12, color: "var(--muted)" }}>
+                    ⚠ {calendarError}
                   </div>
                 )}
               </div>
