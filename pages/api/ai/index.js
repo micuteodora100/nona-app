@@ -172,6 +172,35 @@ Return ONLY valid JSON, no markdown:
 If the text describes only one task, return an array with one item. If it's unclear or empty, return an empty array.`
     }
 
+    if (type === "email_patterns") {
+      // Onboarding's inbox scan — only needs sender + subject to spot recurring
+      // patterns, not full bodies, so this stays cheap even across ~100 emails.
+      const emailList = (emails || [])
+        .slice(0, 150)
+        .map((e, i) => `[${i + 1}] From: ${e.from}\nSubject: ${e.subject}`)
+        .join("\n")
+
+      prompt = `You are scanning ${context?.name || "this person"}'s last 90 days of inbox to find genuinely recurring patterns — not to read or summarize every email.
+
+Here is the list of emails (sender + subject only, most recent first):
+
+${emailList}
+
+Find the 3 to 5 MOST common and notable recurring patterns — real repeated senders or clearly repeated subject types. Examples of the kind of pattern to look for: a specific online retailer sending order confirmations repeatedly, a recurring newsletter from the same sender, repeated statements or alerts from a specific bank or financial institution, a recurring service/subscription reminder, a school or childcare provider sending regular updates.
+
+Only include a pattern if it appears at least 3 times in the list above — do not invent a group from a one-off email.
+
+For each pattern return:
+- "label": a short, human-readable description written for the person reading it, e.g. "Frequent order confirmations from Amazon", "A recurring newsletter from TechCrunch", "Frequent statements from BGL BNP Paribas"
+- "matcher": the exact lowercase text (a sender email/domain, or a short distinctive subject phrase) that would match every email in this group — this will be used as a filter rule for future emails, so keep it precise and specific to this one pattern, never a generic word
+- "count": how many emails in the list above match this pattern
+
+Return ONLY valid JSON, no markdown, no explanation:
+{"groups": [{"label": "...", "matcher": "...", "count": 7}]}
+
+If there are genuinely no repeated patterns (every email is one-off), return {"groups": []}.`
+    }
+
     if (type === "brief") {
       const todayISO = new Date().toISOString().slice(0, 10)
       const pendingTasks = (tasks || [])
@@ -217,7 +246,9 @@ Keep the total number of items across all groups to at most 5-6 — this is stil
 Format: for each group, one header line with just the category name (no bullet, no punctuation), followed by its items on their own lines starting with "•". If there's truly nothing pressing, respond with a single line: "• Nothing pressing today."`
     }
 
-    // Use Haiku for simple structured extraction (cheap), Sonnet for brief and triage (quality matters)
+    // Use Haiku for simple structured extraction (cheap), Sonnet for brief, triage,
+    // and email_patterns (reads across the whole 90-day inbox — quality matters,
+    // and it only runs once at onboarding so cost is a non-issue)
     const model = (type === "parse_tasks" || type === "email_to_task")
       ? "claude-haiku-4-5-20251001"
       : "claude-sonnet-4-6"
@@ -230,7 +261,7 @@ Format: for each group, one header line with just the category name (no bullet, 
 
     const text = message.content[0].text
 
-    if (type === "triage" || type === "parse_tasks" || type === "email_to_task") {
+    if (type === "triage" || type === "parse_tasks" || type === "email_to_task" || type === "email_patterns") {
       try {
         const parsed = parseAIJson(text)
         return res.json(parsed)
