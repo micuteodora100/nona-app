@@ -20,44 +20,69 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Invalid provider" })
   }
 
-  const secret = process.env.NEXTAUTH_SECRET
-  const token = await getToken({ req, secret })
-  if (!token || !token.providers?.[provider]) {
+  // Whether a provider is "connected" is decided from oauth_tokens (the same
+  // source pages/api/auth/provider-status.js reads) — never from the NextAuth
+  // session cookie. That cookie is per-browser and only gets a provider
+  // marker at the moment you click "Connect" *in that browser*; disconnecting
+  // from a second device, or after the cookie's own 30-day life reset it,
+  // used to fail with a false "Provider not connected" here even though the
+  // token genuinely existed server-side — the same class of bug the identity
+  // migration fixed for the read path, just never carried over to this one.
+  // Read-only variant deliberately, not getSupabaseUser(req, res) — this
+  // handler writes its own Set-Cookie header for the NextAuth session further
+  // down, and a second unrelated Set-Cookie write from the Supabase client
+  // would silently clobber it (Node's res.setHeader replaces, not appends).
+  const user = await getSupabaseUserReadOnly(req)
+  if (!user) return res.status(401).json({ error: "Not authenticated" })
+
+  const supabase = getSupabaseServer()
+  const { data: existingRow } = supabase
+    ? await supabase.from("oauth_tokens").select("provider").eq("auth_user_id", user.id).eq("provider", provider).single()
+    : { data: null }
+  if (!existingRow) {
     return res.status(400).json({ error: "Provider not connected" })
   }
-
-  const nextProviders = { ...token.providers }
-  delete nextProviders[provider]
-  const nextToken = { ...token, providers: nextProviders }
 
   // Revoke upstream + delete our stored copy, keyed by the Supabase Auth
   // identity (not the provider's own email — see lib/tokens.js).
   try {
-    const user = await getSupabaseUserReadOnly(req)
-    if (user) {
-      await revokeProviderToken(user.id, provider)
-      const supabase = getSupabaseServer()
-      if (supabase) {
-        await supabase.from("oauth_tokens").delete().eq("auth_user_id", user.id).eq("provider", provider)
-      }
+    await revokeProviderToken(user.id, provider)
+    if (supabase) {
+      await supabase.from("oauth_tokens").delete().eq("auth_user_id", user.id).eq("provider", provider)
     }
   } catch (err) {
     console.error("Failed to revoke/delete stored tokens on disconnect:", err.message)
   }
 
-  const secureCookie = process.env.NEXTAUTH_URL?.startsWith("https://") ?? !!process.env.VERCEL
-  const cookieName = secureCookie ? "__Secure-next-auth.session-token" : "next-auth.session-token"
+  // Best-effort: keep this browser's NextAuth session cookie in sync too, if
+  // it exists. Not the source of truth (the DB delete above already is), so a
+  // missing/stale cookie here is never treated as an error.
+  let nextProviders = {}
+  try {
+    const secret = process.env.NEXTAUTH_SECRET
+    const token = await getToken({ req, secret })
+    if (token?.providers) {
+      nextProviders = { ...token.providers }
+      delete nextProviders[provider]
+      const nextToken = { ...token, providers: nextProviders }
 
-  const encoded = await encode({ token: nextToken, secret, maxAge: DEFAULT_MAX_AGE })
-  const attrs = [
-    `${cookieName}=${encoded}`,
-    "Path=/",
-    "HttpOnly",
-    "SameSite=Lax",
-    `Max-Age=${DEFAULT_MAX_AGE}`,
-  ]
-  if (secureCookie) attrs.push("Secure")
-  res.setHeader("Set-Cookie", attrs.join("; "))
+      const secureCookie = process.env.NEXTAUTH_URL?.startsWith("https://") ?? !!process.env.VERCEL
+      const cookieName = secureCookie ? "__Secure-next-auth.session-token" : "next-auth.session-token"
+
+      const encoded = await encode({ token: nextToken, secret, maxAge: DEFAULT_MAX_AGE })
+      const attrs = [
+        `${cookieName}=${encoded}`,
+        "Path=/",
+        "HttpOnly",
+        "SameSite=Lax",
+        `Max-Age=${DEFAULT_MAX_AGE}`,
+      ]
+      if (secureCookie) attrs.push("Secure")
+      res.setHeader("Set-Cookie", attrs.join("; "))
+    }
+  } catch (err) {
+    console.error("Failed to sync NextAuth session cookie on disconnect (non-fatal):", err.message)
+  }
 
   return res.json({ ok: true, providers: nextProviders })
 }

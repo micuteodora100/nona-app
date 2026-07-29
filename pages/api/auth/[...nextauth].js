@@ -13,7 +13,7 @@ const MicrosoftPersonalProvider = {
   wellKnown: "https://login.microsoftonline.com/consumers/v2.0/.well-known/openid-configuration",
   authorization: {
     params: {
-      scope: "openid profile email offline_access https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/Notes.Read",
+      scope: "openid profile email offline_access https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/Notes.Read https://graph.microsoft.com/Calendars.Read",
     },
   },
   idToken: true,

@@ -39,7 +39,7 @@ export default async function handler(req, res) {
     }
   }
 
-  const { type, emails, tasks, context, categories, instruction, settings, dismissedPatterns } = req.body
+  const { type, emails, tasks, context, categories, instruction, settings, dismissedPatterns, existingTasks } = req.body
 
   // Natural-language command box (Home screen's speak-or-type capture): maps
   // free text to exactly one of a fixed set of app actions via real Anthropic
@@ -61,7 +61,7 @@ export default async function handler(req, res) {
   // morning-brief cron (lib/ai-brief.js) rather than each defining it inline here.
   if (type === "triage") {
     try {
-      const parsed = await runTriagePrompt(client, { emails, context, categories, dismissedPatterns })
+      const parsed = await runTriagePrompt(client, { emails, context, categories, dismissedPatterns, existingTasks })
       return res.json(parsed)
     } catch (err) {
       console.error("AI error:", err.message)

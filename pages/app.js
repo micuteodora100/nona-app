@@ -234,6 +234,11 @@ export default function Nona() {
   }, [providers?.google?.connected])
 
   useEffect(() => {
+    if (providers?.microsoft?.connected) fetchOutlookCalendar()
+    else { setOutlookCalendarEvents([]); setOutlookCalendarError(null) }
+  }, [providers?.microsoft?.connected])
+
+  useEffect(() => {
     getPushPermissionState().then((state) => setPushEnabled(state === "granted"))
   }, [])
 
@@ -324,6 +329,8 @@ export default function Nona() {
   const [weekOffset, setWeekOffset] = useState(0) // weeks from current week
   const [calendarEvents, setCalendarEvents] = useState([]) // real Google Calendar events, read-only, merged into the week view
   const [calendarError, setCalendarError] = useState(null) // e.g. "reconnect Google" when the stored token predates the calendar.readonly scope
+  const [outlookCalendarEvents, setOutlookCalendarEvents] = useState([]) // real Outlook Calendar events, read-only, merged into the week view
+  const [outlookCalendarError, setOutlookCalendarError] = useState(null) // e.g. "reconnect Outlook" when the stored token predates the Calendars.Read scope
 
   const [weather, setWeather] = useState(null)
   const [brief, setBrief] = useState(null)
@@ -609,7 +616,7 @@ export default function Nona() {
       .join("\n")
   }
 
-  // ── calendar (read-only Google Calendar events, merged into the week view) ──
+  // ── calendar (read-only Google + Outlook Calendar events, merged into the week view) ──
   async function fetchGoogleCalendar() {
     try {
       const r = await fetch("/api/calendar/google")
@@ -619,11 +626,28 @@ export default function Nona() {
         setCalendarError(d.reconnectRequired ? "Reconnect Google in Settings to see your calendar" : (d.error || "Could not load calendar"))
         return
       }
-      setCalendarEvents(d.events || [])
+      setCalendarEvents((d.events || []).map(e => ({ ...e, source: "google" })))
       setCalendarError(null)
     } catch (e) {
       setCalendarEvents([])
       setCalendarError("Could not load calendar: " + e.message)
+    }
+  }
+
+  async function fetchOutlookCalendar() {
+    try {
+      const r = await fetch("/api/calendar/outlook")
+      const d = await r.json()
+      if (!r.ok || d.error) {
+        setOutlookCalendarEvents([])
+        setOutlookCalendarError(d.reconnectRequired ? "Reconnect Outlook in Settings to see your calendar" : (d.error || "Could not load calendar"))
+        return
+      }
+      setOutlookCalendarEvents((d.events || []).map(e => ({ ...e, source: "outlook" })))
+      setOutlookCalendarError(null)
+    } catch (e) {
+      setOutlookCalendarEvents([])
+      setOutlookCalendarError("Could not load calendar: " + e.message)
     }
   }
 
@@ -724,6 +748,7 @@ export default function Nona() {
           context: { name: profile.name || "there", child: profile.child || "your child", notesSummary: onenoteContextSummary() },
           categories: getCategories(profile),
           dismissedPatterns: profile.dismissedTaskPatterns || [],
+          existingTasks: tasks.filter(t => !t.done && !t.notRelevant && !t.isEvent).map(t => t.text),
         }),
       })
       const text = await r.text()
@@ -756,7 +781,36 @@ export default function Nona() {
           const tag = typeof item === "string" ? null : (item.tag || null)
           return { id: String(Date.now() + Math.random()), text, done: false, tag, fromEmail: true }
         })
-        setTasks(prev => [...newTasks, ...prev])
+        setTasks(prev => {
+          // Backstop against the AI still re-suggesting something already
+          // pending (the existingTasks instruction above is the primary
+          // defense, but isn't guaranteed) — exact-text match only, since a
+          // fuzzy match risks dropping a genuinely new, differently-worded task.
+          const existingTexts = new Set(prev.filter(t => !t.done && !t.notRelevant).map(t => (t.text || "").trim().toLowerCase()))
+          const fresh = newTasks.filter(t => !existingTexts.has((t.text || "").trim().toLowerCase()))
+          return [...fresh, ...prev]
+        })
+      }
+      // Tasks the AI wasn't confident were duplicates of something already
+      // pending (e.g. she manually added "Appointment with BGL" and an email
+      // also confirms a BGL appointment, worded differently) — ask instead of
+      // silently guessing either way. Confirms run here, outside any setState
+      // updater, so StrictMode's double-invoke-to-check-purity behavior can't
+      // fire the same dialog twice.
+      if (d.possible_duplicate_tasks?.length) {
+        const toAdd = []
+        for (const item of d.possible_duplicate_tasks) {
+          const text = typeof item === "string" ? item : item.text
+          const tag = typeof item === "string" ? null : (item.tag || null)
+          const similarTo = typeof item === "string" ? null : item.similar_to
+          const isDuplicate = similarTo
+            ? window.confirm(`Nona found: "${text}"\n\nIs this the same as your existing task "${similarTo}"?\n\nOK = same thing, don't add it again\nCancel = different, add as a new task`)
+            : false
+          if (!isDuplicate) {
+            toAdd.push({ id: String(Date.now() + Math.random()), text, done: false, tag, fromEmail: true })
+          }
+        }
+        if (toAdd.length) setTasks(prev => [...toAdd, ...prev])
       }
       // Auto-add calendar events extracted from emails
       if (d.calendar_events?.length) {
@@ -1038,11 +1092,10 @@ export default function Nona() {
       const dayTasks = tasks.filter(t => t.date === iso && !t.done).map(t => ({ ...t, source: "task" }))
       const calFilters = profile.calendarFilters || []
       const hiddenIds = profile.hiddenCalendarEventIds || []
-      const dayCalendarEvents = calendarEvents
+      const dayCalendarEvents = [...calendarEvents, ...outlookCalendarEvents]
         .filter(e => e.date === iso)
         .filter(e => !hiddenIds.includes(e.id))
         .filter(e => !calFilters.some(rule => (e.text || "").toLowerCase().includes(rule)))
-        .map(e => ({ ...e, source: "google" }))
       days.push({ date: d, iso, isToday, label: d.toLocaleDateString("en-GB", { weekday: "short" })[0], num: d.getDate(), tasks: [...dayTasks, ...dayCalendarEvents] })
     }
     return days
@@ -1392,6 +1445,7 @@ export default function Nona() {
                 <option value="">No tag</option>
                 {categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
               </select>
+              <button className="btn-sm" style={{ color: "var(--muted)" }} title="Dismiss as noise, not done" onClick={() => { markNotRelevant(t.id); setEditingTaskId(null) }}>🚫 Not relevant</button>
               <button className="btn-sm" onClick={() => setEditingTaskId(null)}>Done</button>
             </div>
           </div>
@@ -1948,7 +2002,7 @@ export default function Nona() {
                     {getWeekDays(weekOffset).filter(d => d.tasks.length > 0).map(d => (
                       d.tasks.map(t => (
                         <div key={`${t.source}-${t.id}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", fontSize: 13 }}>
-                          {t.source === "google" ? (
+                          {t.source !== "task" ? (
                             <svg viewBox="0 0 24 24" fill="none" stroke={d.isToday ? "var(--gold)" : "rgba(255,107,74,0.7)"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="12" height="12" style={{ flexShrink: 0 }}>
                               <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
                             </svg>
@@ -1956,9 +2010,9 @@ export default function Nona() {
                             <div style={{ width: 6, height: 6, borderRadius: "50%", background: d.isToday ? "var(--gold)" : "rgba(255,107,74,0.5)", flexShrink: 0 }} />
                           )}
                           <div style={{ width: 44, flexShrink: 0, color: "var(--muted)", fontSize: 12 }}>{d.isToday ? "Today" : d.date.toLocaleDateString("en-GB", { weekday: "short" })}</div>
-                          <div style={{ flex: 1, color: "var(--white)", minWidth: 0 }}>{t.text}{t.source === "google" && t.time ? ` · ${t.time}` : ""}</div>
+                          <div style={{ flex: 1, color: "var(--white)", minWidth: 0 }}>{t.text}{t.source !== "task" && t.time ? ` · ${t.time}` : ""}</div>
                           <button
-                            title={t.source === "google" ? "Hide this from your calendar" : "Delete task"}
+                            title={t.source !== "task" ? "Hide this from your calendar" : "Delete task"}
                             style={{ color: "var(--muted)", opacity: 0.5, fontSize: 15, flexShrink: 0, padding: "0 2px" }}
                             onClick={() => {
                               if (t.source === "task") { deleteTask(t.id); return }
@@ -1976,9 +2030,10 @@ export default function Nona() {
                     ))}
                   </div>
                 )}
-                {calendarError && (
+                {(calendarError || outlookCalendarError) && (
                   <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)", fontSize: 12, color: "var(--muted)" }}>
-                    ⚠ {calendarError}
+                    {calendarError && <div>⚠ {calendarError}</div>}
+                    {outlookCalendarError && <div>⚠ {outlookCalendarError}</div>}
                   </div>
                 )}
               </div>
@@ -2556,7 +2611,7 @@ export default function Nona() {
               {(profile.calendarFilters || []).length > 0 && (
                 <div style={{ marginTop: 24, marginBottom: 8 }}>
                   <div style={{ fontSize: 10, color: "var(--gold)", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>🚫 Hidden from calendar</div>
-                  <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>Google Calendar events matching these titles never show up — hit "Hide always" from an event's × to add more.</div>
+                  <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>Calendar events matching these titles never show up — hit "Hide always" from an event's × to add more.</div>
                   {profile.calendarFilters.map((rule, i) => (
                     <div key={i} className="settings-row" style={{ marginBottom: 6 }}>
                       <div style={{ fontSize: 13, color: "var(--white)" }}>{rule}</div>
