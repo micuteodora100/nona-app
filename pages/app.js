@@ -280,9 +280,19 @@ export default function Nona() {
   }
   const [obName, setObName] = useState("")
   const [obChild, setObChild] = useState("")
+  const [obWork, setObWork] = useState("")
+  const [obCreche, setObCreche] = useState("")
   const [obTime, setObTime] = useState("07:00")
 
   const [profile, setProfile] = useState({ name: "", child: "", briefTime: "07:00", work: "", creche: "", language: "en-GB", emailFilters: [], recurring: [] })
+
+  const [obStep, setObStep] = useState(1) // 1 basic info, 2 categories, 3 email patterns
+  const [obCategories, setObCategories] = useState(() => getCategories(profile).map(c => ({ ...c, kept: true })))
+  const [obNewCategoryLabel, setObNewCategoryLabel] = useState("")
+  const [obEmailScan, setObEmailScan] = useState("idle") // idle | scanning | done | error | skipped
+  const [obEmailScanError, setObEmailScanError] = useState(null)
+  const [obDetectedGroups, setObDetectedGroups] = useState([])
+  const [obGroupChoices, setObGroupChoices] = useState({}) // matcher -> "keep" | "mute"
   const [tasks, setTasks] = useState([])
   const [tab, setTab] = useState("home") // home | tasks | mail | settings
   const [weekOffset, setWeekOffset] = useState(0) // weeks from current week
@@ -413,8 +423,94 @@ export default function Nona() {
   }, [onboarded])
 
   // ── onboarding ───────────────────────────────────────────────────────
-  async function obNext() {
-    const p = { name: obName, child: obChild, briefTime: obTime }
+  function obToggleCategory(id) {
+    setObCategories(prev => prev.map(c => c.id === id ? { ...c, kept: !c.kept } : c))
+  }
+
+  function obAddCategory() {
+    const label = obNewCategoryLabel.trim()
+    if (!label) return
+    setObCategories(prev => {
+      const id = slugifyCategoryId(label, prev.map(c => c.id))
+      return [...prev, { id, label, color: nextNoteColor(prev), kept: true }]
+    })
+    setObNewCategoryLabel("")
+  }
+
+  // Fetches the last 90 days of email via the existing Gmail/Outlook routes
+  // (same ones the Mail tab uses) and asks the AI to spot recurring patterns.
+  // Skips gracefully — never blocks onboarding — if no provider is connected
+  // yet, the fetch fails, or nothing recurring is found.
+  async function obScanEmailPatterns() {
+    setObStep(3)
+    if (!providers?.google && !providers?.microsoft) {
+      setObEmailScan("skipped")
+      return
+    }
+    setObEmailScan("scanning")
+    setObEmailScanError(null)
+    try {
+      const allEmails = []
+      const fetchErrors = []
+      if (providers?.google) {
+        const r = await fetch("/api/email/gmail")
+        if (r.ok) { const d = await r.json(); allEmails.push(...(d.emails || [])) }
+        else fetchErrors.push("Gmail")
+      }
+      if (providers?.microsoft) {
+        const r = await fetch("/api/email/outlook")
+        if (r.ok) { const d = await r.json(); allEmails.push(...(d.emails || [])) }
+        else fetchErrors.push("Outlook")
+      }
+      if (allEmails.length === 0) {
+        if (fetchErrors.length > 0) {
+          setObEmailScanError(`Couldn't reach ${fetchErrors.join(" and ")} just now`)
+          setObEmailScan("error")
+        } else {
+          setObEmailScan("skipped")
+        }
+        return
+      }
+      const r = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "email_patterns",
+          emails: allEmails,
+          context: { name: obName || "there" },
+        }),
+      })
+      const d = await r.json()
+      if (!r.ok || d.error) throw new Error(d.error || "Could not analyze inbox")
+      const groups = (d.groups || []).filter(g => g?.matcher && g?.label).slice(0, 5)
+      setObDetectedGroups(groups)
+      setObGroupChoices(Object.fromEntries(groups.map(g => [g.matcher, "keep"])))
+      setObEmailScan(groups.length ? "done" : "skipped")
+    } catch (e) {
+      setObEmailScanError(e.message)
+      setObEmailScan("error")
+    }
+  }
+
+  function obSetGroupChoice(matcher, choice) {
+    setObGroupChoices(prev => ({ ...prev, [matcher]: choice }))
+  }
+
+  function obFinish() {
+    const finalCategories = obCategories.filter(c => c.kept).map(({ kept, ...c }) => c)
+    const mutedMatchers = Object.entries(obGroupChoices)
+      .filter(([, choice]) => choice === "mute")
+      .map(([matcher]) => matcher.toLowerCase())
+    const p = {
+      ...profile,
+      name: obName,
+      child: obChild,
+      work: obWork,
+      creche: obCreche,
+      briefTime: obTime,
+      categories: finalCategories,
+      emailFilters: [...new Set([...(profile.emailFilters || []), ...mutedMatchers])],
+    }
     setProfile(p)
     setOnboarded(true)
   }
@@ -1185,19 +1281,109 @@ export default function Nona() {
         <div className="ob">
           <div className="ob-logo">nona</div>
           <div className="ob-tag">your personal AI</div>
-          <div className="ob-step">
-            {/* Single step for now — the AI context survey (groupings + email-pattern
-                detection) is being built separately and will extend this flow. */}
-            <h2>Let's make this yours.</h2>
-            <p>A few things so Nona knows how to start your day.</p>
-            <div><label className="field-label">Your name</label>
-              <input className="input" value={obName} onChange={e => setObName(e.target.value)} placeholder="e.g. Alex" /></div>
-            <div><label className="field-label">Your child's name & age</label>
-              <input className="input" value={obChild} onChange={e => setObChild(e.target.value)} placeholder="e.g. Jamie, 3 years" /></div>
-            <div><label className="field-label">Morning brief time</label>
-              <input className="input" type="time" value={obTime} onChange={e => setObTime(e.target.value)} /></div>
-            <button className="btn btn-gold" onClick={obNext}>Start my day →</button>
-          </div>
+
+          {obStep === 1 && (
+            <div className="ob-step">
+              <h2>Let's make this yours.</h2>
+              <p>A few things so Nona knows how to start your day.</p>
+              <div><label className="field-label">Your name</label>
+                <input className="input" value={obName} onChange={e => setObName(e.target.value)} placeholder="e.g. Alex" /></div>
+              <div><label className="field-label">Your child's name & age</label>
+                <input className="input" value={obChild} onChange={e => setObChild(e.target.value)} placeholder="e.g. Jamie, 3 years" /></div>
+              <div><label className="field-label">Work (optional)</label>
+                <input className="input" value={obWork} onChange={e => setObWork(e.target.value)} placeholder="e.g. Product manager, job searching" /></div>
+              <div><label className="field-label">Crèche / school (optional)</label>
+                <input className="input" value={obCreche} onChange={e => setObCreche(e.target.value)} placeholder="e.g. Les Petits Loups, Tue/Thu" /></div>
+              <div><label className="field-label">Morning brief time</label>
+                <input className="input" type="time" value={obTime} onChange={e => setObTime(e.target.value)} /></div>
+              <button className="btn btn-gold" onClick={() => setObStep(2)}>Next →</button>
+              <div className="dots">
+                {[1, 2, 3].map(n => (
+                  <span key={n} style={{ width: 6, height: 6, borderRadius: "50%", background: n === obStep ? "var(--gold)" : "var(--border)" }} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {obStep === 2 && (
+            <div className="ob-step">
+              <h2>What should Nona track?</h2>
+              <p>These are the groupings your tasks and inbox get sorted into. Turn off any you don't need, or add your own — you can always change this later in Settings.</p>
+              {obCategories.map(c => (
+                <label key={c.id} className="settings-row" style={{ cursor: "pointer" }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ width: 14, height: 14, borderRadius: 4, background: c.color, display: "inline-block", flexShrink: 0 }} />
+                    {c.label}
+                  </span>
+                  <input type="checkbox" checked={c.kept} onChange={() => obToggleCategory(c.id)} />
+                </label>
+              ))}
+              <div style={{ display: "flex", gap: 8 }}>
+                <input className="input" value={obNewCategoryLabel} onChange={e => setObNewCategoryLabel(e.target.value)}
+                  placeholder="Add a category, e.g. Travel" onKeyDown={e => e.key === "Enter" && obAddCategory()} />
+                <button className="btn-sm" onClick={obAddCategory}>Add</button>
+              </div>
+              <button className="btn btn-gold" onClick={obScanEmailPatterns}>Next →</button>
+              <div className="dots">
+                {[1, 2, 3].map(n => (
+                  <span key={n} style={{ width: 6, height: 6, borderRadius: "50%", background: n === obStep ? "var(--gold)" : "var(--border)" }} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {obStep === 3 && (
+            <div className="ob-step">
+              <h2>A few things we noticed in your inbox</h2>
+
+              {obEmailScan === "scanning" && (
+                <p>Scanning your last 90 days of email for recurring patterns…</p>
+              )}
+
+              {obEmailScan === "skipped" && !providers?.google && !providers?.microsoft && (
+                <p style={{ color: "var(--muted)" }}>
+                  Gmail and Outlook aren't connected yet, so Nona can't scan your inbox right now. Connect email anytime in Settings — once you do, Nona will pick up on things like recurring senders or newsletters automatically.
+                </p>
+              )}
+
+              {obEmailScan === "skipped" && (providers?.google || providers?.microsoft) && (
+                <p style={{ color: "var(--muted)" }}>No strong recurring patterns found in your last 90 days — nothing to confirm here. You can still mute individual senders anytime from Mail.</p>
+              )}
+
+              {obEmailScan === "error" && (
+                <p style={{ color: "var(--muted)" }}>Couldn't scan your inbox right now{obEmailScanError ? ` (${obEmailScanError})` : ""}. That's fine — email triage will still work normally, and you can try this again from Settings later.</p>
+              )}
+
+              {obEmailScan === "done" && (
+                <>
+                  <p>Say whether each is relevant, or mute it so Nona stops surfacing it.</p>
+                  {obDetectedGroups.map(g => (
+                    <div key={g.matcher} className="settings-row" style={{ flexDirection: "column", alignItems: "flex-start", gap: 8 }}>
+                      <div>
+                        <div style={{ fontWeight: 600 }}>{g.label}</div>
+                        <div style={{ fontSize: 12, color: "var(--muted)" }}>~{g.count} emails in the last 90 days</div>
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button className={"btn-sm" + (obGroupChoices[g.matcher] !== "mute" ? " btn-gold" : "")}
+                          onClick={() => obSetGroupChoice(g.matcher, "keep")}>Keep me posted</button>
+                        <button className={"btn-sm" + (obGroupChoices[g.matcher] === "mute" ? " btn-gold" : "")}
+                          onClick={() => obSetGroupChoice(g.matcher, "mute")}>Mute these</button>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
+
+              <button className="btn btn-gold" onClick={obFinish} disabled={obEmailScan === "scanning"}>
+                {obEmailScan === "scanning" ? "Scanning…" : "Start my day →"}
+              </button>
+              <div className="dots">
+                {[1, 2, 3].map(n => (
+                  <span key={n} style={{ width: 6, height: 6, borderRadius: "50%", background: n === obStep ? "var(--gold)" : "var(--border)" }} />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         // ═══════════════ MAIN APP ═══════════════
