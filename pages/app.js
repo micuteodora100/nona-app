@@ -509,10 +509,15 @@ export default function Nona() {
 
   async function triageEmails(emailList) {
     // Filter out emails already handled (task was completed) before sending to AI
-    // Also apply global filter rules defined by user in Settings
+    // Also apply global filter rules defined by user in Settings.
+    // Keyed by the email's own id (Gmail/Outlook message id) — from::subject
+    // used to be the key, but automated senders (e.g. "Your Luxair e-ticket
+    // receipt") reuse the exact same subject for every message, so dismissing
+    // one ticket permanently hid every future ticket from that sender. Real bug,
+    // found 29 Jul 2026 while debugging a flight that never reached the calendar.
     const globalFilters = profile.emailFilters || []
     const filteredList = emailList.filter(e => {
-      const key = `${e.from}::${e.subject}`
+      const key = e.id
       if (handledEmails.has(key)) return false
       // Check global filter rules (pattern matching on sender or subject)
       for (const rule of globalFilters) {
@@ -591,7 +596,7 @@ export default function Nona() {
   }
 
   function dismissEmail(email) {
-    const key = `${email.from}::${email.subject}`
+    const key = email.id
     // Add to handled list so it never appears in triage or tasks again
     setHandledEmails(prev => {
       const next = new Set(prev)
@@ -604,7 +609,7 @@ export default function Nona() {
       if (!prev) return prev
       const filterOut = (arr) => arr?.filter(item => {
         const e = emails[item.index - 1]
-        return e ? `${e.from}::${e.subject}` !== key : true
+        return e ? e.id !== key : true
       })
       return { ...prev, urgent: filterOut(prev.urgent), action: filterOut(prev.action) }
     })
@@ -626,7 +631,7 @@ export default function Nona() {
   }
 
   async function addEmailAsTask(email, index) {
-    const dupeKey = `${email.from}::${email.subject}`
+    const dupeKey = email.id
     // Skip if already handled (task was previously completed) or already exists in current session
     if (handledEmails.has(dupeKey) || tasks.some(t => t.emailKey === dupeKey)) {
       setAddedTaskIndices(prev => [...prev, index])
