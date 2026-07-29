@@ -1,7 +1,6 @@
 import { getSupabaseUser } from "../../../lib/supabase-auth"
 import { getSupabaseServer } from "../../../lib/supabase-server"
-import { DEFAULT_CATEGORIES } from "../../../lib/categories"
-import { DAILY_AI_LIMIT, getAnthropicClient, runTriagePrompt, runBriefPrompt, runCommandPrompt } from "../../../lib/ai-brief"
+import { DAILY_AI_LIMIT, getAnthropicClient, runTriagePrompt, runBriefPrompt, runCommandPrompt, categoryListStr } from "../../../lib/ai-brief"
 
 const client = getAnthropicClient()
 
@@ -85,8 +84,7 @@ export default async function handler(req, res) {
     // Categories are user-customizable (Settings) — always tag from whatever
     // the user currently has, not a hardcoded list, so custom categories get
     // picked up by the AI same as the defaults.
-    const cats = categories?.length ? categories : DEFAULT_CATEGORIES
-    const categoryListStr = cats.map(c => `"${c.id}" (${c.label})`).join(", ")
+    const catList = categoryListStr(categories)
 
     // Self-training feedback loop: tasks the person has explicitly dismissed
     // as "not relevant" (as opposed to genuinely completed) get remembered
@@ -115,7 +113,7 @@ Rules:
 - "text": a short, specific task title (under 10 words if possible) describing what the recipient needs to DO — not a summary. E.g. "Reply to Maria about contract" not "Email from Maria about contract."
 - "description": one short sentence (under 20 words) giving context — what the email is actually about, so the task makes sense without reopening the email.
 - "date": if the email mentions any date, deadline, or appointment (even relative like "by Friday" or "next week"), resolve it to an actual date using today as reference. If genuinely no date is mentioned, use null.
-- "tag": pick the single best-fitting category id from: ${categoryListStr}. Use null if genuinely none fit.
+- "tag": pick the single best-fitting category id from: ${catList}. Use null if genuinely none fit.
 
 Return ONLY valid JSON, no markdown:
 {"text": "short task title", "description": "one short sentence of context", "date": "2026-07-12" or null, "tag": "bills"}`
@@ -135,7 +133,7 @@ For each task:
 - Extract a clean, short task description (remove date phrases from the text itself, keep it actionable)
 - If a date is mentioned (even relative like "tomorrow", "Thursday", "next week", "the 8th"), resolve it to an actual date using today's date as reference, and include it
 - If no date is mentioned, leave date as null
-- Pick the single best-fitting category id for "tag" from: ${categoryListStr}. Use null if genuinely none fit.
+- Pick the single best-fitting category id for "tag" from: ${catList}. Use null if genuinely none fit.
 
 Return ONLY valid JSON, no markdown:
 {

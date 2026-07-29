@@ -18,8 +18,13 @@ export default async function handler(req, res) {
       return res.json({ ok: true, connected: false })
     }
 
+    // Deliberately checks /notebooks, not the bulk cross-notebook /pages
+    // endpoint — /pages 400s outright once an account has more than a
+    // handful of sections across its notebooks (found 29 Jul 2026 on a real
+    // account with 13 sections), which used to make this status check itself
+    // report a false "Graph API error" even though the scope was genuinely fine.
     const response = await fetch(
-      "https://graph.microsoft.com/v1.0/me/onenote/pages?$top=1&$select=id",
+      "https://graph.microsoft.com/v1.0/me/onenote/notebooks?$top=1&$select=id",
       { headers: { Authorization: `Bearer ${accessToken}` } }
     )
 

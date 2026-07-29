@@ -33,30 +33,57 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: "Microsoft connection expired — reconnect Outlook in Settings" })
     }
 
-    const listResponse = await fetch(
-      `https://graph.microsoft.com/v1.0/me/onenote/pages` +
-      `?$top=${MAX_PAGES}` +
-      `&$select=id,title,createdDateTime,lastModifiedDateTime,contentUrl` +
-      `&$orderby=lastModifiedDateTime desc`,
+    // The bulk cross-notebook `/me/onenote/pages` endpoint 400s once an
+    // account has more than a handful of sections across its notebooks —
+    // found 29 Jul 2026 on a real account with 13 sections in one notebook
+    // ("The number of maximum sections is exceeded for this request").
+    // Microsoft's own fix is what's used here: list sections, then pull pages
+    // per-section instead of in one flat call.
+    const sectionsResponse = await fetch(
+      `https://graph.microsoft.com/v1.0/me/onenote/sections?$top=50&$select=id,displayName`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     )
 
-    if (!listResponse.ok) {
+    if (!sectionsResponse.ok) {
       // A token that was issued before Notes.Read existed (i.e. before this
       // feature shipped) simply won't carry that scope — Graph rejects it
       // with 401/403 rather than a "missing scope" message, so that's the
       // signal we surface a reconnect prompt on.
-      if (listResponse.status === 401 || listResponse.status === 403) {
+      if (sectionsResponse.status === 401 || sectionsResponse.status === 403) {
         return res.status(403).json({
           error: "Outlook is connected but doesn't have OneNote read access yet — reconnect Outlook in Settings to grant it.",
         })
       }
-      const err = await listResponse.text()
+      const err = await sectionsResponse.text()
       throw new Error(err)
     }
 
-    const listData = await listResponse.json()
-    const rawPages = listData.value || []
+    const sections = (await sectionsResponse.json()).value || []
+
+    const perSectionResults = await Promise.allSettled(
+      sections.map((s) =>
+        fetch(
+          `https://graph.microsoft.com/v1.0/me/onenote/sections/${s.id}/pages` +
+          `?$top=${MAX_PAGES}` +
+          `&$select=id,title,createdDateTime,lastModifiedDateTime,contentUrl` +
+          `&$orderby=lastModifiedDateTime desc`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        ).then(async (r) => {
+          if (!r.ok) throw new Error(await r.text())
+          return (await r.json()).value || []
+        })
+      )
+    )
+
+    const rawPages = []
+    perSectionResults.forEach((r) => {
+      if (r.status === "fulfilled") rawPages.push(...r.value)
+      else console.error("OneNote section pages fetch failed:", r.reason?.message)
+    })
+    // Sections were each already sorted newest-first, but across sections the
+    // combined list needs its own global sort before taking the overall top N.
+    rawPages.sort((a, b) => new Date(b.lastModifiedDateTime) - new Date(a.lastModifiedDateTime))
+    rawPages.splice(MAX_PAGES)
 
     async function fetchOne(page) {
       let text = ""

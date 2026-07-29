@@ -3,7 +3,7 @@ import { signIn, signOut } from "next-auth/react"
 import Head from "next/head"
 import { supabase } from "../lib/supabase"
 import { subscribeToPush, unsubscribeFromPush, getPushPermissionState } from "../lib/push-client"
-import { getCategories, categoryLabel, slugifyCategoryId, noteColor, nextNoteColor } from "../lib/categories"
+import { getCategories, categoryLabel, slugifyCategoryId, noteColor, nextNoteColor, validTag } from "../lib/categories"
 
 // ── helpers ──────────────────────────────────────────────────────────────
 const STORAGE_KEY = "nona_v2"
@@ -223,10 +223,19 @@ export default function Nona() {
   // its content in the background so triage/brief have it as context —
   // best-effort: a failure here just means one less signal, never an error
   // the user needs to see, since nothing depends on it existing.
+  //
+  // Explicit opt-in required (profile.onenoteEnabled), not just "scope is
+  // technically available" — added 29 Jul 2026 after finding a real,
+  // live-looking credential (a GitHub token) sitting in a note on a live
+  // account. OneNote content feeds straight into the triage/brief prompts,
+  // so silently reading every section the moment the scope allows it risks
+  // sending something like that to Anthropic's API without the user ever
+  // having agreed to it. Default is off for everyone, including accounts
+  // that were already connected before this flag existed.
   useEffect(() => {
-    if (onenoteStatus?.scopeOk) fetchOnenoteNotes()
+    if (onenoteStatus?.scopeOk && profile.onenoteEnabled) fetchOnenoteNotes()
     else setOnenoteNotes(null)
-  }, [onenoteStatus?.scopeOk])
+  }, [onenoteStatus?.scopeOk, profile.onenoteEnabled])
 
   useEffect(() => {
     if (providers?.google?.connected) fetchGoogleCalendar()
@@ -458,6 +467,21 @@ export default function Nona() {
       }
       // Triage loads on demand (Mail tab) — not on boot
     }
+  }, [onboarded])
+
+  // Auto-refresh the brief when the app is reopened/refocused later in the
+  // day, instead of only ever regenerating it once on the initial mount
+  // above. Still respects the same 6h cache — this just adds a second
+  // trigger point (coming back to a backgrounded tab) so a stale brief
+  // doesn't just sit there until someone remembers to tap "↺ Refresh".
+  useEffect(() => {
+    if (!onboarded) return
+    function onVisible() {
+      if (document.visibilityState !== "visible") return
+      if (!loadCache("nona_brief", 6)) generateBrief()
+    }
+    document.addEventListener("visibilitychange", onVisible)
+    return () => document.removeEventListener("visibilitychange", onVisible)
   }, [onboarded])
 
   // ── onboarding ───────────────────────────────────────────────────────
@@ -778,7 +802,7 @@ export default function Nona() {
       if (d.tasks?.length) {
         const newTasks = d.tasks.map(item => {
           const text = typeof item === "string" ? item : item.text
-          const tag = typeof item === "string" ? null : (item.tag || null)
+          const tag = typeof item === "string" ? null : validTag(item.tag, categories)
           return { id: String(Date.now() + Math.random()), text, done: false, tag, fromEmail: true }
         })
         setTasks(prev => {
@@ -801,7 +825,7 @@ export default function Nona() {
         const toAdd = []
         for (const item of d.possible_duplicate_tasks) {
           const text = typeof item === "string" ? item : item.text
-          const tag = typeof item === "string" ? null : (item.tag || null)
+          const tag = typeof item === "string" ? null : validTag(item.tag, categories)
           const similarTo = typeof item === "string" ? null : item.similar_to
           const isDuplicate = similarTo
             ? window.confirm(`Nona found: "${text}"\n\nIs this the same as your existing task "${similarTo}"?\n\nOK = same thing, don't add it again\nCancel = different, add as a new task`)
@@ -927,7 +951,7 @@ export default function Nona() {
         description: d.description || email.snippet || "",
         date: d.date || null,
         done: false,
-        tag: d.tag || null,
+        tag: validTag(d.tag, categories),
         fromEmail: true,
         emailKey: dupeKey,
       }
@@ -1015,7 +1039,7 @@ export default function Nona() {
           text: t.text,
           date: t.date || null,
           done: false,
-          tag: t.tag || guessTag(t.text),
+          tag: validTag(t.tag, categories) || guessTag(t.text),
         }))
       }
     } catch (e) {}
@@ -1186,7 +1210,7 @@ export default function Nona() {
     switch (d.action) {
       case "add_tasks": {
         const newTasks = (d.tasks || []).map(t => ({
-          id: String(Date.now() + Math.random()), text: t.text, date: t.date || null, done: false, tag: t.tag || guessTag(t.text),
+          id: String(Date.now() + Math.random()), text: t.text, date: t.date || null, done: false, tag: validTag(t.tag, categories) || guessTag(t.text),
         }))
         setTasks(prev => [...newTasks, ...prev])
         break
@@ -1195,7 +1219,7 @@ export default function Nona() {
         const updates = {}
         if (d.text !== undefined) updates.text = d.text
         if (d.date !== undefined) updates.date = d.date || null
-        if (d.tag !== undefined) updates.tag = d.tag || null
+        if (d.tag !== undefined) updates.tag = validTag(d.tag, categories)
         if (Object.keys(updates).length) updateTask(d.taskId, updates)
         break
       }
@@ -1901,6 +1925,22 @@ export default function Nona() {
                 </div>
               </div>
               <div className="card" style={{ marginBottom: 20 }}>
+                {(() => {
+                  // Live, no-AI-call count of what's actually still pending right
+                  // now (due today or overdue, not done/not-relevant) — updates
+                  // instantly as tasks are completed through the day, unlike the
+                  // narrative brief text below it, which only regenerates
+                  // periodically. Added 29 Jul 2026 so "what's pending" always
+                  // reflects the current moment even between brief refreshes.
+                  const todayISO = toISODate(new Date())
+                  const pendingCount = tasks.filter(t => !t.done && !t.notRelevant && !t.isEvent && t.date && t.date <= todayISO).length
+                  if (pendingCount === 0) return null
+                  return (
+                    <div style={{ fontSize: 12, color: "var(--gold)", fontWeight: 600, marginBottom: 10, paddingBottom: 10, borderBottom: "1px solid var(--border)" }}>
+                      {pendingCount} {pendingCount === 1 ? "task" : "tasks"} pending today
+                    </div>
+                  )
+                })()}
                 {briefLoading ? (
                   <div style={{ padding: "6px 0", fontSize: 13, color: "var(--muted)" }}>Getting your day together…</div>
                 ) : brief ? (
@@ -2550,19 +2590,29 @@ export default function Nona() {
                 <div className="settings-row">
                   <div>
                     <div style={{ fontSize: 14 }}>
-                      {!onenoteStatus ? "OneNote — checking…" : onenoteStatus.scopeOk ? "OneNote connected ✓" : "⚠ OneNote needs reconnect"}
+                      {!onenoteStatus ? "OneNote — checking…" : onenoteStatus.scopeOk ? (profile.onenoteEnabled ? "OneNote enabled ✓" : "OneNote available, not enabled") : "⚠ OneNote needs reconnect"}
                     </div>
                     <div style={{ fontSize: 12, color: "var(--muted)" }}>
                       {!onenoteStatus
                         ? "Read-only, via your Outlook connection"
                         : onenoteStatus.scopeOk
-                        ? "Read-only, via your Outlook connection"
+                        ? "Off by default — your notes aren't read or sent to the AI until you turn this on"
                         : "Your Outlook connection predates OneNote access — reconnect to grant it"}
                     </div>
                   </div>
                   {onenoteStatus && !onenoteStatus.scopeOk && (
                     <button className="btn-sm" onClick={() => signIn("microsoft")}>Reconnect →</button>
                   )}
+                  {onenoteStatus?.scopeOk && (
+                    <button className="btn-sm" onClick={() => setProfile(p => ({ ...p, onenoteEnabled: !p.onenoteEnabled }))}>
+                      {profile.onenoteEnabled ? "Disable" : "Enable →"}
+                    </button>
+                  )}
+                </div>
+              )}
+              {providers?.microsoft && onenoteStatus?.scopeOk && profile.onenoteEnabled && (
+                <div className="settings-row" style={{ fontSize: 12, color: "var(--muted)" }}>
+                  Reads every section across your notebooks right now — picking specific notebooks/sections is planned, not built yet. If any note holds something sensitive (a password, a key, an account number), turn this off until that's ready.
                 </div>
               )}
 
