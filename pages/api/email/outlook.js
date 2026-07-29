@@ -1,5 +1,6 @@
 import { getSupabaseUser } from "../../../lib/supabase-auth"
 import { getAccessToken } from "../../../lib/tokens"
+import { cleanPdfText } from "../../../lib/pdf-text"
 
 function stripHtml(html) {
   return (html || "")
@@ -29,7 +30,7 @@ async function extractPdfTextFromMessage(messageId, accessToken) {
     const pdfParse = (await import("pdf-parse")).default
     const buffer = Buffer.from(pdfAttachment.contentBytes, "base64")
     const parsed = await pdfParse(buffer)
-    return (parsed.text || "").replace(/\s+/g, " ").trim().slice(0, 1500)
+    return cleanPdfText(parsed.text).slice(0, 1500)
   } catch (err) {
     console.error("Outlook PDF extract failed:", err.message)
     return ""

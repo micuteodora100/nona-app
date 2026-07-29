@@ -1,5 +1,6 @@
 import { getSupabaseUser } from "../../../lib/supabase-auth"
 import { getAccessToken } from "../../../lib/tokens"
+import { cleanPdfText } from "../../../lib/pdf-text"
 import { google } from "googleapis"
 
 // Decode Gmail's base64url body parts into plain text, walking nested MIME parts
@@ -78,7 +79,7 @@ async function extractPdfText(gmail, messageId, attachmentId) {
     const buffer = Buffer.from(att.data.data, "base64")
     const parsed = await pdfParse(buffer)
     // Cap extracted text — tickets/confirmations rarely need more than this to find dates/flight numbers
-    return (parsed.text || "").replace(/\s+/g, " ").trim().slice(0, 1500)
+    return cleanPdfText(parsed.text).slice(0, 1500)
   } catch (err) {
     console.error("PDF extract failed:", err.message)
     return ""
