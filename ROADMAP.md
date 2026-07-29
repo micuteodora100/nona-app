@@ -11,6 +11,8 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 
 | Feature | Notes |
 |---------|-------|
+| ✅ Fixed real root cause of missing flight/PDF dates | Fixed 29 Jul 2026 — debugged live against Teodora's real inbox and real Luxair e-ticket PDF (read-only, using the app's own stored OAuth tokens). Two separate issues found and fixed: (1) `pdf-parse` strips spaces between words ("14Aug2026", "MicuTeodoraMrs") — new `lib/pdf-text.js` re-inserts them, wired into both `gmail.js` and `outlook.js`. (2) The actual root cause: the "dismiss email forever" key was `sender::subject`, and automated senders (Luxair, banks, etc.) reuse the identical subject for every message — completing one old flight task had silently blacklisted every future email with that sender+subject, including her real upcoming Aug 14 flight. Switched the key to the email's own id (Gmail/Outlook message id, genuinely unique per message) in `triageEmails`/`dismissEmail`/`addEmailAsTask`. The one-click mute-by-sender feature is unaffected — that's intentionally pattern-based. |
+|---------|-------|
 | ✅ Password gate | Web Crypto HMAC in Edge Middleware |
 | ✅ Session expiry | 24h cookie, re-authenticates daily |
 | ✅ Rate limiting | 5 attempts → 15 min lockout |
