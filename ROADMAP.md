@@ -1,9 +1,12 @@
 # Nona — Product Roadmap
 
-Last updated: 28 July 2026 (multi-user migration, RLS verified live, sign-out fix, UI polish)
+Last updated: 29 July 2026 (P0 fully closed — multi-user verified live with a second real account; status column added to every open item; PDF/flight-date fix)
 
 T-shirt sizes: XS = half day | S = 1-2 days | M = 3-5 days | L = 1-2 weeks | XL = 3-4 weeks
 Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
+Status: 🟢 doable now, unblocked | 🟡 doable but depends on another row below | 🔴 blocked on something only Teodora can do (account/legal/business step) | ⚫ not feasible right now
+
+**⚠️ Note on "queued as overnight routine" items below:** several P1/P2 rows say they were queued for an unattended overnight build 28→29 Jul. Checked git history on 29 Jul — none of them actually got built; only roadmap text was edited that night. They're still fully pending (now marked 🟢/🟡 below), just no longer blocked. Flagging this so "queued" isn't mistaken for "done."
 
 ---
 
@@ -12,7 +15,6 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 | Feature | Notes |
 |---------|-------|
 | ✅ Fixed real root cause of missing flight/PDF dates | Fixed 29 Jul 2026 — debugged live against Teodora's real inbox and real Luxair e-ticket PDF (read-only, using the app's own stored OAuth tokens). Two separate issues found and fixed: (1) `pdf-parse` strips spaces between words ("14Aug2026", "MicuTeodoraMrs") — new `lib/pdf-text.js` re-inserts them, wired into both `gmail.js` and `outlook.js`. (2) The actual root cause: the "dismiss email forever" key was `sender::subject`, and automated senders (Luxair, banks, etc.) reuse the identical subject for every message — completing one old flight task had silently blacklisted every future email with that sender+subject, including her real upcoming Aug 14 flight. Switched the key to the email's own id (Gmail/Outlook message id, genuinely unique per message) in `triageEmails`/`dismissEmail`/`addEmailAsTask`. The one-click mute-by-sender feature is unaffected — that's intentionally pattern-based. |
-|---------|-------|
 | ✅ Password gate | Web Crypto HMAC in Edge Middleware |
 | ✅ Session expiry | 24h cookie, re-authenticates daily |
 | ✅ Rate limiting | 5 attempts → 15 min lockout |
@@ -63,28 +65,31 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 | ✅ RLS tightened on all user data tables | Shipped 28 Jul 2026 — `supabase/rls-tightening.sql` run and verified live: queried `nona_user_data`/`push_subscriptions`/`oauth_tokens` directly with the public/anon key and confirmed "permission denied" on all three (previously wide open `USING (true)`). Closes the last latent hole from the security-hardening row above. |
 | ✅ Sign out button + account-switch cache fix | Shipped 28 Jul 2026 — there was no plain sign-out, only "Reset Nona" (which also wipes local data). Added a proper Sign out button, and while building it found the gap it exposed: `localStorage` is one browser-wide cache with no owner tag, so switching Supabase accounts on the same browser without a full reset could let the previous account's cached-but-unsynced tasks get merged into the new account's cloud data by the safe-merge sync logic — the same class of cross-account bleed the identity migration was meant to close, via a different path. Every local save now tags the cache with the logged-in account's id; a mismatch on sign-in clears local state first. |
 | ✅ Home/calendar/tasks UI polish | Shipped 28 Jul 2026 — capture box ("Speak or type what's on your mind") moved to the top of Home, right under the greeting. Calendar day-number circles enlarged (26px/11px → 32px/15px) for legibility. Tasks tab now defaults to grouped-by-category instead of by-date, so it reads as titled sections (Work, Family, ...) rather than one mixed list; tightened card spacing and softened the per-card tilt (±1.5deg → ±0.8deg) so grouped sections read as organized, not scattered. |
+| ✅ Branded Supabase Auth emails | Shipped 28 Jul 2026 — confirmation emails were coming from Supabase's default relay ("powered by Supabase" branding), confusing for new signups. Supabase custom SMTP now routed through Resend (same account already used for `/contact` emails), sender name "Nona", and the "Confirm signup" template rewritten to drop Supabase branding. Dashboard-only change, no code. |
+| ✅ Multi-user isolation verified live | Verified 29 Jul 2026 — Teodora tested with a genuine second Supabase Auth account, including back-to-back sign-in on the same browser, and confirmed tasks/profile/email connections are fully isolated between accounts. Closes the last open P0 item. |
 
 ---
 
 ## 🔴 P0 — Fix now (blocking: sharing Nona with anyone else)
+
+**P0 is now fully closed** — nothing left blocking sharing Nona with someone else.
 
 | Size | Feature | Notes |
 |------|---------|-------|
 | ✅ | **Outlook connection** | Done — Microsoft Graph API via proper OAuth 2.0, using a direct Azure app registration + a custom NextAuth provider (`pages/api/auth/[...nextauth].js`), not through Supabase's own Azure provider. Personal Microsoft accounts only (`/consumers` endpoint), `Mail.Read` scope. `MICROSOFT_CLIENT_ID`/`MICROSOFT_CLIENT_SECRET` confirmed working locally 23 Jul 2026 — make sure both are also set in Vercel. |
 | ✅ | **Multi-user login — unify the identity model** | Done 28 Jul 2026 — see the Shipped entry above for the full writeup. Sync/tokens now key off Supabase Auth `user.id`, existing data migrated, legacy password gate retired, frontend session bug found in live testing and fixed, account-switch cache bleed fixed. |
 | ✅ | **Security hardening before sharing** | Done 28 Jul 2026 — both halves shipped: per-user AI usage guardrail, and RLS tightened + verified live with a direct anon-key query. See Shipped above. |
-| S | **Verify with a genuinely second account** | The only item left before this P0 section is fully closed. Needs: a second real Supabase Auth account (separate email), ideally in an incognito window; confirm its tasks/profile/Gmail-or-Outlook connection are fully isolated from Teodora's; specifically re-test logging in as one account right after the other **on the same browser** (the exact scenario the old bugs would have broken, now fixed twice over). Claude can't create the account or enter a password (credential-entry is off-limits) — this one needs Teodora to click through it, with Claude verifying the resulting data via read-only DB checks. |
+| ✅ | **Verify with a genuinely second account** | **Done 29 Jul 2026** — Teodora tested with a real second Supabase Auth account and confirmed data (tasks/profile/connections) is fully isolated from her own, including the same-browser back-to-back login scenario the earlier identity bugs broke. This was the last open P0 item — section is now closed. |
 
 ---
 
 ## 🟡 P1 — Next sprint (build now)
 
-| Size | Feature | Notes |
-|------|---------|-------|
-| M | **Natural-language command box** | Raised 28 Jul 2026 — type (or say) any instruction ("mute IBKR", "move brief to 8am", "delete the dentist task") and Claude maps it to one of a defined set of app actions via tool-calling, reusing the existing `/api/ai` pattern. Not literally open-ended — needs an explicit action schema (add/edit/delete task, mute sender, change a setting, etc.), and destructive actions (delete, mute) should confirm before firing rather than executing silently on a misread instruction. Cost is a non-issue: ~$0.001/command on Haiku 4.5 at typical size, well inside the existing `DAILY_AI_LIMIT` guardrail. Queued to start after the two open P0 verification items above are done. |
-| M | **AI context survey on first open** | Refined 28 Jul 2026. Onboarding now does more than 5 fixed questions: (1) explicitly asks which task groupings/categories the person actually cares about, rather than silently defaulting to the fixed starter set; (2) scans the last 90 days of email (reusing the existing Gmail/Outlook fetch) and has the AI detect the most common real patterns in the inbox — recurring senders, subject clusters (e.g. "frequent IBKR account emails", "school newsletters", "Amazon orders"); (3) surfaces 2-3 targeted questions about those *actual* detected groups, not generic ones, and asks which of the detected buckets are relevant; (4) uses the answers to pre-populate both the category list and the mute-rule list (`profile.emailFilters`) together, so day one already reflects the real inbox instead of the person discovering muting/categories manually later. Queued as the second overnight routine, 28→29 Jul 2026. |
-| S | **OneNote connection (read-only)** | Raised 28 Jul 2026. Scope: read-only, via Microsoft Graph (`Notes.Read`), same OAuth pattern as the existing Outlook integration — feeds OneNote content in as extra context for the brief/triage/context-survey, nothing written back. `Notes.Read` added to the Azure app registration 28 Jul 2026 — unblocked. Queued as the third overnight routine, 28→29 Jul 2026. |
-| S | **Branded Supabase Auth emails** | Raised 28 Jul 2026 — confirmation emails were coming from Supabase's default relay ("powered by Supabase" branding), confusing for new signups. Fixed same day: Supabase custom SMTP now routed through Resend (same account already used for `/contact` emails), sender name "Nona", and the "Confirm signup" template rewritten to drop Supabase branding. Dashboard-only change, no code. |
+| Size | Status | Feature | Notes |
+|------|--------|---------|-------|
+| M | 🟢 Doable now | **Natural-language command box** | Raised 28 Jul 2026 — type (or say) any instruction ("mute IBKR", "move brief to 8am", "delete the dentist task") and Claude maps it to one of a defined set of app actions via tool-calling, reusing the existing `/api/ai` pattern. Not literally open-ended — needs an explicit action schema (add/edit/delete task, mute sender, change a setting, etc.), and destructive actions (delete, mute) should confirm before firing rather than executing silently on a misread instruction. Cost is a non-issue: ~$0.001/command on Haiku 4.5 at typical size, well inside the existing `DAILY_AI_LIMIT` guardrail. Was queued to start once P0 verification closed — **unblocked now**, nothing else in the way. |
+| M | 🟢 Doable now, not built yet | **AI context survey on first open** | Refined 28 Jul 2026. Onboarding now does more than 5 fixed questions: (1) explicitly asks which task groupings/categories the person actually cares about, rather than silently defaulting to the fixed starter set; (2) scans the last 90 days of email (reusing the existing Gmail/Outlook fetch) and has the AI detect the most common real patterns in the inbox — recurring senders, subject clusters (e.g. "frequent IBKR account emails", "school newsletters", "Amazon orders"); (3) surfaces 2-3 targeted questions about those *actual* detected groups, not generic ones, and asks which of the detected buckets are relevant; (4) uses the answers to pre-populate both the category list and the mute-rule list (`profile.emailFilters`) together, so day one already reflects the real inbox instead of the person discovering muting/categories manually later. Was flagged as queued for an overnight build 28→29 Jul — **checked 29 Jul, it was never actually implemented**, still just a spec. No external blocker, just needs the work done. |
+| S | 🟢 Doable now, not built yet | **OneNote connection (read-only)** | Raised 28 Jul 2026. Scope: read-only, via Microsoft Graph (`Notes.Read`), same OAuth pattern as the existing Outlook integration — feeds OneNote content in as extra context for the brief/triage/context-survey, nothing written back. `Notes.Read` added to the Azure app registration 28 Jul 2026 — unblocked. Was flagged as queued for an overnight build 28→29 Jul — **checked 29 Jul, it was never actually implemented**. No code for it exists yet. |
 
 ---
 
@@ -92,39 +97,39 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 
 Audited 23 Jul 2026 — everything below is confirmed genuinely not built except the push notification row. Two natural groupings for future batching: the four **budget** rows (BIL/Revolut connections → Amazon/Lidl spend parsing → unified dashboard) form one sequence since each depends on the one before it; the two **grocery** rows (weekly offers + price comparison) form another and both just feed the still-placeholder Groceries tab.
 
-| Size | Feature | Notes |
-|------|---------|-------|
-| M | **Waiting for replies tracker** | Scans sent Gmail, finds threads with no reply after 5 days. Queued as an overnight routine, 28→29 Jul 2026. |
-| S | **Google Calendar integration** | Show real Google Calendar appointments in week view alongside tasks. `calendar.readonly` scope added to the Google Cloud OAuth consent screen 28 Jul 2026 — unblocked. Queued as an overnight routine, 28→29 Jul 2026. |
-| S | **Outlook Calendar integration** | Raised 28 Jul 2026 — same as Google Calendar but for Outlook, via Microsoft Graph `Calendars.Read` on the same Azure app registration already used for Mail.Read/Notes.Read. **Blocked**: needs `Calendars.Read` added in Azure (portal.azure.com → App registrations → your app → API permissions → same place Notes.Read was added) before it can be queued. |
-| M | **Read Slack into tasks** | Raised 28 Jul 2026 — read a Slack channel and surface actionable messages as tasks, mirroring the already-listed WhatsApp summariser idea (P3). **Blocked**: needs a Slack App created at api.slack.com, installed to the workspace, with a bot token scoped to `channels:history`/`channels:read` (or the private-channel equivalents) — a new external service, not something to queue blind. |
-| M | **Document expiry reminders** | Passport, driving licence, residence permit, contrôle technique. One-time setup, reminds 6 weeks before. |
-| M | **Morning brief push notification at 7am** | Partially built: subscribe/unsubscribe + service worker (`lib/push-client.js`, `public/sw.js`, `pages/api/push/subscribe.js`) and encrypted-token storage for cron access (`lib/tokens.js`, `oauth_tokens` table) all already exist. What's still missing: the actual scheduled trigger — no Vercel Cron config or `/api/cron/*` route exists yet to fire at 7am, generate the brief, and call the push send. Queued as an overnight routine, 28→29 Jul 2026. |
-| L | **BIL connection** | PSD2 via Nordigen/GoCardless. Read-only. |
-| L | **Revolut connection** | Same PSD2 approach. Transactions, balance, categories. |
-| M | **Amazon spend tracking** | Parse Amazon order confirmation emails — item, price, delivery date. No API needed. |
-| M | **Lidl spend tracking** | Parse Lidl Plus receipt emails. |
-| L | **Unified budget dashboard** | AI categorises all spend. This month vs last vs average. |
-| M | **Weekly Lidl/Aldi offers** | Scrape lidl.lu/fr/offres + aldi.lu weekly (Thursdays). Alert when basket items on offer. |
-| M | **Cactus/Auchan/Delhaize price comparison** | Full online catalogues scrapable. Everyday prices. |
-| M | **Two-factor authentication** | TOTP via authenticator app |
+| Size | Status | Feature | Notes |
+|------|--------|---------|-------|
+| M | 🟢 Doable now, not built yet | **Waiting for replies tracker** | Scans sent Gmail, finds threads with no reply after 5 days. Flagged as queued for an overnight build 28→29 Jul — **checked 29 Jul, it was never actually implemented**. No blocker, just not started. |
+| S | 🟢 Doable now, not built yet | **Google Calendar integration** | Show real Google Calendar appointments in week view alongside tasks. `calendar.readonly` scope added to the Google Cloud OAuth consent screen 28 Jul 2026 — unblocked. Flagged as queued for an overnight build 28→29 Jul — **checked 29 Jul, it was never actually implemented**. |
+| S | 🔴 Blocked — Azure permission | **Outlook Calendar integration** | Raised 28 Jul 2026 — same as Google Calendar but for Outlook, via Microsoft Graph `Calendars.Read` on the same Azure app registration already used for Mail.Read/Notes.Read. Needs `Calendars.Read` added in Azure (portal.azure.com → App registrations → your app → API permissions → same place Notes.Read was added) — only Teodora can grant that. |
+| M | 🔴 Blocked — needs a Slack app | **Read Slack into tasks** | Raised 28 Jul 2026 — read a Slack channel and surface actionable messages as tasks, mirroring the WhatsApp summariser idea (P3). Needs a Slack App created at api.slack.com, installed to the workspace, with a bot token scoped to `channels:history`/`channels:read` (or the private-channel equivalents) — a new external service only Teodora can set up. |
+| M | 🟢 Doable now | **Document expiry reminders** | Passport, driving licence, residence permit, contrôle technique. One-time setup, reminds 6 weeks before. |
+| M | 🟢 Doable now, mostly built | **Morning brief push notification at 7am** | Partially built: subscribe/unsubscribe + service worker (`lib/push-client.js`, `public/sw.js`, `pages/api/push/subscribe.js`) and encrypted-token storage for cron access (`lib/tokens.js`, `oauth_tokens` table) all already exist. What's still missing: the actual scheduled trigger — no Vercel Cron config or `/api/cron/*` route exists yet. Flagged as queued for an overnight build 28→29 Jul — **checked 29 Jul, it was never actually implemented**; `vercel.json` still has no cron entry. No blocker, just needs the trigger wired up. |
+| L | 🔴 Blocked — needs a PSD2 provider account | **BIL connection** | PSD2 via Nordigen/GoCardless. Read-only. Needs Teodora to sign up with Nordigen/GoCardless and grant PSD2 consent for her BIL account — Claude can't create that account or authorize bank access. |
+| L | 🔴 Blocked — needs a PSD2 provider account | **Revolut connection** | Same PSD2 approach as BIL, likely the same Nordigen/GoCardless account — still needs Teodora's own consent flow for the Revolut side specifically. |
+| M | 🟢 Doable now | **Amazon spend tracking** | Parse Amazon order confirmation emails — item, price, delivery date. No API needed. |
+| M | 🟢 Doable now | **Lidl spend tracking** | Parse Lidl Plus receipt emails. |
+| L | 🟡 Blocked on BIL/Revolut above | **Unified budget dashboard** | AI categorises all spend. This month vs last vs average. Needs real bank data from the BIL/Revolut rows above to be worth building — sequenced after them. |
+| M | 🟢 Doable now | **Weekly Lidl/Aldi offers** | Scrape lidl.lu/fr/offres + aldi.lu weekly (Thursdays). Alert when basket items on offer. No account/API needed, just scraping — worth a light check that it doesn't violate either site's terms before shipping. |
+| M | 🟢 Doable now | **Cactus/Auchan/Delhaize price comparison** | Full online catalogues scrapable. Everyday prices. Same scraping caveat as above. |
+| M | 🟢 Doable now | **Two-factor authentication** | TOTP via authenticator app — standard library support, no external account needed. |
 
 ---
 
 ## ⚪ P3 — Future
 
-| Size | Feature | Notes |
-|------|---------|-------|
-| S | **Unusual spend alert** | "Amazon spend €340 this month vs avg €120" |
-| M | **Subscription tracker** | Detect recurring charges, flag unused ones |
-| L | **Smart basket builder** | Learn what you buy, alert when on offer, compare basket cost across stores |
-| L | **Partner view** | Read-only summary for partner — makes invisible labour visible |
-| M | **Pending job application tracker** | "Applied to X on 15 Jun — no reply in 12 days. Follow up?" |
-| L | **Nona Pro — compliance officers** | Full YC pitch built. 60-day validation sprint first. |
-| XL | **React Native / Expo native app** | True phone install, push notifications, offline |
-| M | **WhatsApp group summariser** | WhatsApp Cloud API |
-| XL | **Multi-language UI (FR, DE, RO)** | Voice input works in these languages already; full UI localisation is separate |
-| XL | **Fit4Start application** | Next cohort — needs team of 2, SARL, prototype, 1 LOI |
+| Size | Status | Feature | Notes |
+|------|--------|---------|-------|
+| S | 🟡 Blocked on Unified budget dashboard | **Unusual spend alert** | "Amazon spend €340 this month vs avg €120" — needs the budget dashboard's spend history to exist first. |
+| M | 🟡 Blocked on BIL/Revolut | **Subscription tracker** | Detect recurring charges, flag unused ones — needs real bank feed data. |
+| L | 🟡 Blocked on BIL/Revolut + Lidl tracking | **Smart basket builder** | Learn what you buy, alert when on offer, compare basket cost across stores. |
+| L | 🟢 Doable now | **Partner view** | Read-only summary for partner — makes invisible labour visible. |
+| M | 🟢 Doable now | **Pending job application tracker** | "Applied to X on 15 Jun — no reply in 12 days. Follow up?" — same email-scanning approach as the Waiting for replies tracker above. |
+| L | 🔴 Blocked — business step, not code | **Nona Pro — compliance officers** | Full YC pitch built. Needs a 60-day validation sprint first — a business decision for Teodora, not something to build toward yet. |
+| XL | 🟢 Doable, just a big build | **React Native / Expo native app** | True phone install, push notifications, offline. |
+| M | ⚫ Not feasible right now | **WhatsApp group summariser** | WhatsApp Cloud API requires Meta Business verification, a dedicated registered phone number, and app review/approval for the relevant message permissions — heavy external gatekeeping disproportionate to a personal-use feature. Not something to queue until there's a real business reason to go through Meta's approval process. |
+| XL | 🟢 Doable, just a big build | **Multi-language UI (FR, DE, RO)** | Voice input works in these languages already; full UI localisation is separate. |
+| XL | 🔴 Blocked — legal/business steps, time-sensitive | **Fit4Start application** | Next cohort — needs a team of 2, a Luxembourg SARL registered, a working prototype, and 1 letter of intent — all things only Teodora (+ a co-founder) can do. Deadline is ~August 2026, i.e. close — flagging in case it needs to move up in priority. |
 
 ---
 
