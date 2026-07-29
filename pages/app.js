@@ -304,6 +304,10 @@ export default function Nona() {
   })
   const [providers, setProviders] = useState({}) // {google: {connected, email}, microsoft: {...}} — from oauth_tokens, not the NextAuth session
 
+  const [waitingReplies, setWaitingReplies] = useState(null) // null = not checked yet
+  const [waitingLoading, setWaitingLoading] = useState(false)
+  const [waitingError, setWaitingError] = useState(null)
+
   const [taskInput, setTaskInput] = useState("")
   const [taskFilter, setTaskFilter] = useState("all")
 
@@ -593,6 +597,34 @@ export default function Nona() {
     } catch(e) {
       setTriage({ urgent: [], action: [], tasks: [], summary: "Could not triage emails: " + e.message })
     }
+  }
+
+  // Manual, on-demand check (button-triggered, not auto-fetched on every Mail
+  // tab visit) — this hits Gmail/Outlook thread APIs per sent message, more
+  // expensive than the inbox triage fetch, so it stays opt-in for now.
+  async function fetchWaitingForReplies(force = false) {
+    if (!force) {
+      const cached = loadCache("nona_waiting_replies", 6)
+      if (cached) {
+        setWaitingReplies(cached)
+        return
+      }
+    }
+    setWaitingLoading(true)
+    setWaitingError(null)
+    try {
+      const r = await fetch("/api/email/waiting-for-replies")
+      const d = await r.json()
+      if (!r.ok) {
+        setWaitingError(d.error || `Request failed (HTTP ${r.status})`)
+      } else {
+        setWaitingReplies(d.waiting || [])
+        saveCache("nona_waiting_replies", d.waiting || [])
+      }
+    } catch (e) {
+      setWaitingError(e.message)
+    }
+    setWaitingLoading(false)
   }
 
   function dismissEmail(email) {
@@ -1638,6 +1670,36 @@ export default function Nona() {
                     </div>
                   )
                 })()}
+
+                <div className="triage-section" style={{ marginTop: 20 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: waitingReplies ? 8 : 0 }}>
+                    <div className="triage-label" style={{ color: "var(--gold)" }}>⏳ Waiting for replies</div>
+                    <button className="btn-sm" style={{ fontSize: 11 }} disabled={waitingLoading}
+                      onClick={() => fetchWaitingForReplies(true)}>
+                      {waitingLoading ? "Checking…" : waitingReplies ? "↺ Refresh" : "Check"}
+                    </button>
+                  </div>
+
+                  {waitingError ? (
+                    <p style={{ fontSize: 13, color: "#e87a7a", marginTop: 8 }}>{waitingError}</p>
+                  ) : waitingReplies === null ? (
+                    <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
+                      Checks sent mail from the last 14 days for threads nobody's replied to after 5+ days.
+                    </p>
+                  ) : waitingReplies.length === 0 ? (
+                    <p style={{ fontSize: 13, color: "var(--muted)" }}>Nothing waiting — every thread you started has a reply.</p>
+                  ) : (
+                    waitingReplies.map((w, i) => (
+                      <div key={i} className="triage-item">
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div className="triage-from">waiting {w.days} days</div>
+                          <div className="triage-subject">{w.subject}</div>
+                          <div className="triage-reason">to {w.to}</div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
               </>) : (
                 <div style={{ textAlign: "center", padding: "48px 16px", color: "var(--muted)", fontSize: 14 }}>
                   <div style={{ fontSize: 32, marginBottom: 12 }}>📬</div>
