@@ -172,6 +172,7 @@ export default function Nona() {
   const [pushBusy, setPushBusy] = useState(false)
   const [providers, setProviders] = useState({}) // {google: {connected, email}, microsoft: {...}} — from oauth_tokens, not the NextAuth session
   const [onenoteStatus, setOnenoteStatus] = useState(null) // null = not checked yet, else {connected, scopeOk, error}
+  const [onenoteNotes, setOnenoteNotes] = useState(null) // null = not loaded, else [{title, text, ...}] — fed into triage/brief as read-only extra context
 
   // Listen for Supabase auth state changes. localStorage is a single
   // browser-wide key, not scoped per account — on a shared device, if the
@@ -217,6 +218,15 @@ export default function Nona() {
     if (providers?.microsoft) fetchOnenoteStatus()
     else setOnenoteStatus(null)
   }, [providers?.microsoft])
+
+  // Once OneNote is confirmed actually readable (not just connected), pull
+  // its content in the background so triage/brief have it as context —
+  // best-effort: a failure here just means one less signal, never an error
+  // the user needs to see, since nothing depends on it existing.
+  useEffect(() => {
+    if (onenoteStatus?.scopeOk) fetchOnenoteNotes()
+    else setOnenoteNotes(null)
+  }, [onenoteStatus?.scopeOk])
 
   useEffect(() => {
     if (providers?.google?.connected) fetchGoogleCalendar()
@@ -310,7 +320,7 @@ export default function Nona() {
   const [obDetectedGroups, setObDetectedGroups] = useState([])
   const [obGroupChoices, setObGroupChoices] = useState({}) // matcher -> "keep" | "mute"
   const [tasks, setTasks] = useState([])
-  const [tab, setTab] = useState("home") // home | tasks | mail | settings
+  const [tab, setTab] = useState("home") // home | tasks | mail | settings | history
   const [weekOffset, setWeekOffset] = useState(0) // weeks from current week
   const [calendarEvents, setCalendarEvents] = useState([]) // real Google Calendar events, read-only, merged into the week view
   const [calendarError, setCalendarError] = useState(null) // e.g. "reconnect Google" when the stored token predates the calendar.readonly scope
@@ -567,6 +577,38 @@ export default function Nona() {
     }
   }
 
+  // Pulls OneNote page content (read-only) so it can be handed to the AI as
+  // extra context for triage/brief — same 3h cache pattern as fetchEmails,
+  // since it's a live Graph call and this runs opportunistically in the
+  // background rather than on an explicit user action.
+  async function fetchOnenoteNotes(force = false) {
+    if (!force) {
+      const cached = loadCache("nona_onenote", 3)
+      if (cached) { setOnenoteNotes(cached); return }
+    }
+    try {
+      const r = await fetch("/api/notes/onenote")
+      if (!r.ok) return // best-effort — a failure just means no notes context this time
+      const d = await r.json()
+      const pages = d.pages || []
+      setOnenoteNotes(pages)
+      saveCache("nona_onenote", pages)
+    } catch (e) {
+      console.error("Failed to load OneNote notes:", e.message)
+    }
+  }
+
+  // Compact "title: snippet" list capped to keep the triage/brief prompts
+  // cheap — full page bodies aren't needed for background context the way
+  // they are for actually triaging an email.
+  function onenoteContextSummary() {
+    if (!onenoteNotes?.length) return null
+    return onenoteNotes
+      .slice(0, 15)
+      .map(n => `- ${n.title}${n.text ? `: ${n.text.slice(0, 200)}` : ""}`)
+      .join("\n")
+  }
+
   // ── calendar (read-only Google Calendar events, merged into the week view) ──
   async function fetchGoogleCalendar() {
     try {
@@ -679,8 +721,9 @@ export default function Nona() {
         body: JSON.stringify({
           type: "triage",
           emails: listToTriage,
-          context: { name: profile.name || "there", child: profile.child || "your child" },
+          context: { name: profile.name || "there", child: profile.child || "your child", notesSummary: onenoteContextSummary() },
           categories: getCategories(profile),
+          dismissedPatterns: profile.dismissedTaskPatterns || [],
         }),
       })
       const text = await r.text()
@@ -820,6 +863,7 @@ export default function Nona() {
           type: "email_to_task",
           email: { from: email.from, subject: email.subject, snippet: email.snippet || "" },
           categories: getCategories(profile),
+          dismissedPatterns: profile.dismissedTaskPatterns || [],
         }),
       })
       const d = await r.json()
@@ -860,6 +904,7 @@ export default function Nona() {
             creche: profile.creche,
             work: profile.work,
             emailSummary: triage?.summary || null,
+            notesSummary: onenoteContextSummary(),
           },
         }),
       })
@@ -1063,19 +1108,102 @@ export default function Nona() {
     setVoiceRecording(false)
   }
 
+  // Natural-language command box: the Home capture box's send button routes
+  // every instruction through here rather than always treating it as a new
+  // task. The AI maps it to exactly one of a fixed set of app actions
+  // (lib/ai-brief.js's runCommandPrompt, via real tool-calling) and this
+  // applies that action locally. Non-destructive actions fire immediately;
+  // delete_task and mute_sender confirm first since a misread instruction
+  // there is hard to undo unnoticed.
+  async function runCommand(text) {
+    const r = await fetch("/api/ai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "command",
+        instruction: text,
+        tasks,
+        categories: getCategories(profile),
+        settings: { briefTime: profile.briefTime, language: profile.language, emailFilters: profile.emailFilters },
+      }),
+    })
+    const d = await r.json()
+    if (!r.ok || d.error) throw new Error(d.error || "Command failed")
+
+    switch (d.action) {
+      case "add_tasks": {
+        const newTasks = (d.tasks || []).map(t => ({
+          id: String(Date.now() + Math.random()), text: t.text, date: t.date || null, done: false, tag: t.tag || guessTag(t.text),
+        }))
+        setTasks(prev => [...newTasks, ...prev])
+        break
+      }
+      case "edit_task": {
+        const updates = {}
+        if (d.text !== undefined) updates.text = d.text
+        if (d.date !== undefined) updates.date = d.date || null
+        if (d.tag !== undefined) updates.tag = d.tag || null
+        if (Object.keys(updates).length) updateTask(d.taskId, updates)
+        break
+      }
+      case "complete_task": {
+        const t = tasks.find(x => x.id === d.taskId)
+        if (t && !t.done) toggleTask(d.taskId)
+        break
+      }
+      case "dismiss_task": {
+        const t = tasks.find(x => x.id === d.taskId)
+        if (t && !t.notRelevant) markNotRelevant(d.taskId)
+        break
+      }
+      case "delete_task": {
+        const t = tasks.find(x => x.id === d.taskId)
+        if (t && window.confirm(`Delete "${d.taskText || t.text}"?`)) deleteTask(d.taskId)
+        break
+      }
+      case "mute_sender": {
+        const kw = (d.keyword || "").trim().toLowerCase()
+        if (kw && window.confirm(`Hide all future emails matching "${kw}"?`)) {
+          setProfile(p => {
+            const existing = p.emailFilters || []
+            if (existing.some(rule => rule.toLowerCase() === kw)) return p
+            return { ...p, emailFilters: [...existing, kw] }
+          })
+        }
+        break
+      }
+      case "unmute_sender": {
+        const kw = (d.keyword || "").trim().toLowerCase()
+        if (kw) setProfile(p => ({ ...p, emailFilters: (p.emailFilters || []).filter(rule => !rule.toLowerCase().includes(kw)) }))
+        break
+      }
+      case "change_setting": {
+        if (d.setting === "briefTime" && /^\d{2}:\d{2}$/.test(d.value)) setProfile(p => ({ ...p, briefTime: d.value }))
+        if (d.setting === "language" && ["en-GB", "fr-FR", "de-DE", "ro-RO", "it-IT"].includes(d.value)) setProfile(p => ({ ...p, language: d.value }))
+        break
+      }
+      default:
+        throw new Error(d.reason || "Didn't understand that — try rephrasing.")
+    }
+  }
+
   async function confirmVoiceTasks() {
     const text = voiceTranscriptRef.current
     if (!text?.trim()) { setVoiceStatus(""); return }
     setVoiceStatus("thinking")
     try {
-      const newTasks = await parseTasksFromText(text)
-      setTasks(prev => [...newTasks, ...prev])
+      await runCommand(text)
       setVoiceTranscript("")
       setVoiceStatus("")
     } catch (e) {
       // Without this, a thrown error left the box stuck on "Adding…" forever
       // with the text trapped and no way to recover except a page refresh.
-      setVoiceStatus("Couldn't add that — try again")
+      // Transcript is cleared here (unlike a plain network failure before)
+      // because the error message doubles as the box's placeholder — it only
+      // shows once the box is empty, and an "unrecognized" reason is the
+      // whole point of surfacing this to the user, not just a fallback.
+      setVoiceTranscript("")
+      setVoiceStatus(e.message || "Couldn't do that — try again")
       setTimeout(() => setVoiceStatus(""), 3000)
     }
   }
@@ -1123,7 +1251,7 @@ export default function Nona() {
           return next
         })
       }
-      return { ...t, done: nowDone }
+      return { ...t, done: nowDone, completedAt: nowDone ? new Date().toISOString() : null }
     }))
   }
 
@@ -1135,14 +1263,51 @@ export default function Nona() {
     setTasks(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t))
   }
 
+  // Dismissing a task as noise (not genuinely done, just not relevant) is
+  // distinct from both deleting it and completing it — mirrors the existing
+  // permanent-dismiss pattern already used for email. Unlike delete, the task
+  // moves to History rather than vanishing, and its text is remembered
+  // (capped, deduped) so future AI task suggestions can be told to avoid
+  // resurfacing similar ones — same self-training idea as sender muting.
+  function markNotRelevant(id) {
+    const t = tasks.find(x => x.id === id)
+    if (!t) return
+    setTasks(prev => prev.map(x => x.id === id ? { ...x, notRelevant: true, dismissedAt: new Date().toISOString() } : x))
+    setProfile(p => {
+      const existing = p.dismissedTaskPatterns || []
+      if (existing.some(text => text.toLowerCase() === t.text.toLowerCase())) return p
+      return { ...p, dismissedTaskPatterns: [t.text, ...existing].slice(0, 30) }
+    })
+  }
+
+  // Undo for History — clears whichever flag put it there, back to active.
+  function restoreTask(id) {
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, done: false, notRelevant: false, completedAt: null, dismissedAt: null } : t))
+  }
+
   const categories = getCategories(profile)
 
   const filteredTasks = tasks.filter(t => {
     if (t.isEvent) return false // scheduled events live in the calendar, not the Tasks list
-    if (taskFilter === "done") return t.done
+    if (t.notRelevant) return false // dismissed as noise — lives in History, never the active list
+    if (taskFilter === "done") return false // completed tasks moved out of this list entirely — see History
     if (taskFilter === "all") return !t.done
     return !t.done && t.tag === taskFilter
   })
+
+  // History: completed + dismissed tasks, most recent first. Falls back to
+  // id order (which encodes creation time as Date.now()+random) for tasks
+  // marked done before completedAt/dismissedAt existed.
+  const historyTasks = tasks
+    .filter(t => !t.isEvent && (t.done || t.notRelevant))
+    .sort((a, b) => {
+      const ak = a.completedAt || a.dismissedAt || ""
+      const bk = b.completedAt || b.dismissedAt || ""
+      if (ak && bk) return bk.localeCompare(ak)
+      if (ak) return -1
+      if (bk) return 1
+      return b.id > a.id ? 1 : -1
+    })
 
   function groupTasks(list) {
     if (taskGroupBy === "none") return [{ label: null, items: list }]
@@ -1243,7 +1408,8 @@ export default function Nona() {
             </div>
             {t.fromEmail && <span className="task-email-badge">📧</span>}
             {!compact && t.tag && <span className="task-tag">{categoryLabel(t.tag, categories)}</span>}
-            <button className="task-del" onClick={() => deleteTask(t.id)}>×</button>
+            <button className="task-dismiss" title="Not relevant — dismiss as noise, not done" onClick={() => markNotRelevant(t.id)}>🚫</button>
+            <button className="task-del" title="Delete" onClick={() => deleteTask(t.id)}>×</button>
           </>
         )}
       </div>
@@ -1362,6 +1528,9 @@ export default function Nona() {
         .task-del { color: var(--white); opacity: 0.4; padding: 2px; font-size: 18px; line-height: 1;
           transition: opacity 0.2s; }
         .task-del:hover { opacity: 1; }
+        .task-dismiss { color: var(--white); opacity: 0.35; padding: 2px 3px; font-size: 13px; line-height: 1;
+          transition: opacity 0.2s; }
+        .task-dismiss:hover { opacity: 0.9; }
 
         /* Bucket — grouped-by-category view. One compact card per category
            (tinted with that category's own note color in the header only,
@@ -1580,12 +1749,12 @@ export default function Nona() {
               </>
             ) : (
               <>
-                <button onClick={() => setTab("home")} style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--gold)", fontSize: 14 }}>
+                <button onClick={() => setTab(tab === "history" ? "tasks" : "home")} style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--gold)", fontSize: 14 }}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18"><polyline points="15 18 9 12 15 6" /></svg>
                   Back
                 </button>
                 <span style={{ fontSize: 14, color: "var(--white)", fontWeight: 600 }}>
-                  {tab === "tasks" ? "Tasks" : tab === "mail" ? "Mail" : "Settings"}
+                  {tab === "tasks" ? "Tasks" : tab === "mail" ? "Mail" : tab === "history" ? "History" : "Settings"}
                 </span>
               </>
             )}
@@ -2088,9 +2257,12 @@ export default function Nona() {
 
             {/* ── TASKS ── */}
             {tab === "tasks" && <>
-              <div style={{ marginBottom: 14 }}>
-                <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 2 }}>Mental load</div>
-                <div style={{ fontSize: 12, color: "var(--muted)" }}>Everything in your head, in one place</div>
+              <div style={{ marginBottom: 14, display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 2 }}>Mental load</div>
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>Everything in your head, in one place</div>
+                </div>
+                <button onClick={() => setTab("history")} style={{ fontSize: 12, color: "var(--gold)", flexShrink: 0, paddingTop: 2 }}>History →</button>
               </div>
 
               <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
@@ -2110,7 +2282,7 @@ export default function Nona() {
               </div>
 
               <div className="chips">
-                {[["all", "All"], ["today", "Today"], ...categories.map(c => [c.id, c.label]), ["done", "Done"]].map(([f, label]) => (
+                {[["all", "All"], ["today", "Today"], ...categories.map(c => [c.id, c.label])].map(([f, label]) => (
                   <button key={f} className={`chip ${taskFilter === f ? "on" : ""}`} onClick={() => setTaskFilter(f)}>
                     {label}
                   </button>
@@ -2128,7 +2300,7 @@ export default function Nona() {
               {filteredTasks.length === 0 ? (
                 <div style={{ textAlign: "center", padding: "32px 16px", color: "var(--muted)", fontSize: 13, lineHeight: 1.6 }}>
                   <div style={{ fontSize: 32, marginBottom: 10 }}>🧠</div>
-                  {taskFilter === "done" ? "Nothing done yet — your wins will show here." : "Add your first task above. Nona keeps track so you don't have to."}
+                  Add your first task above. Nona keeps track so you don't have to.
                 </div>
               ) : taskGroupBy === "tag" ? (
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -2159,6 +2331,40 @@ export default function Nona() {
                   {group.items.map(t => renderTaskItem(t, false))}
                 </div>
               ))}
+            </>}
+
+            {/* ── HISTORY ── */}
+            {tab === "history" && <>
+              <div style={{ marginBottom: 18 }}>
+                <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 2 }}>History</div>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>Completed tasks, and things dismissed as not relevant</div>
+              </div>
+
+              {historyTasks.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "32px 16px", color: "var(--muted)", fontSize: 13, lineHeight: 1.6 }}>
+                  <div style={{ fontSize: 32, marginBottom: 10 }}>🗂</div>
+                  Nothing here yet — completed and dismissed tasks show up here instead of lingering in your active list.
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {historyTasks.map(t => {
+                    const when = t.completedAt || t.dismissedAt
+                    return (
+                      <div key={t.id} className="task task-compact" style={{ opacity: 0.85 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div className="task-text" style={{ textDecoration: t.done ? "line-through" : "none" }}>{t.text}</div>
+                          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+                            {t.done ? "Completed" : "Not relevant"}{when ? ` · ${new Date(when).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""}
+                            {t.tag && ` · ${categoryLabel(t.tag, categories)}`}
+                          </div>
+                        </div>
+                        <button className="btn-sm" style={{ fontSize: 11, flexShrink: 0 }} onClick={() => restoreTask(t.id)}>Restore</button>
+                        <button className="task-del" title="Delete permanently" onClick={() => deleteTask(t.id)}>×</button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </>}
 
             {/* ── ME ── */}

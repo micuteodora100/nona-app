@@ -1,7 +1,7 @@
 import { getSupabaseUser } from "../../../lib/supabase-auth"
 import { getSupabaseServer } from "../../../lib/supabase-server"
 import { DEFAULT_CATEGORIES } from "../../../lib/categories"
-import { DAILY_AI_LIMIT, getAnthropicClient, runTriagePrompt, runBriefPrompt } from "../../../lib/ai-brief"
+import { DAILY_AI_LIMIT, getAnthropicClient, runTriagePrompt, runBriefPrompt, runCommandPrompt } from "../../../lib/ai-brief"
 
 const client = getAnthropicClient()
 
@@ -39,13 +39,29 @@ export default async function handler(req, res) {
     }
   }
 
-  const { type, emails, tasks, context, categories } = req.body
+  const { type, emails, tasks, context, categories, instruction, settings, dismissedPatterns } = req.body
+
+  // Natural-language command box (Home screen's speak-or-type capture): maps
+  // free text to exactly one of a fixed set of app actions via real Anthropic
+  // tool-calling (tool_choice "any" forces a tool call, never free text), so
+  // the result is always one of these known shapes rather than parsed prose.
+  // The client applies non-destructive actions immediately and confirms
+  // before firing delete_task / mute_sender.
+  if (type === "command") {
+    try {
+      const parsed = await runCommandPrompt(client, { instruction, tasks, categories, settings })
+      return res.json(parsed)
+    } catch (err) {
+      console.error("AI error:", err.message)
+      return res.status(500).json({ error: err.message })
+    }
+  }
 
   // triage and brief now share their prompt-building + call logic with the
   // morning-brief cron (lib/ai-brief.js) rather than each defining it inline here.
   if (type === "triage") {
     try {
-      const parsed = await runTriagePrompt(client, { emails, context, categories })
+      const parsed = await runTriagePrompt(client, { emails, context, categories, dismissedPatterns })
       return res.json(parsed)
     } catch (err) {
       console.error("AI error:", err.message)
@@ -72,6 +88,14 @@ export default async function handler(req, res) {
     const cats = categories?.length ? categories : DEFAULT_CATEGORIES
     const categoryListStr = cats.map(c => `"${c.id}" (${c.label})`).join(", ")
 
+    // Self-training feedback loop: tasks the person has explicitly dismissed
+    // as "not relevant" (as opposed to genuinely completed) get remembered
+    // (pages/app.js's markNotRelevant, capped at 30) so repeatedly-dismissed
+    // patterns stop resurfacing — same idea as sender muting, but for tasks.
+    const dismissedSection = dismissedPatterns?.length
+      ? `\nThe person has previously dismissed these as NOT relevant (noise, not something to track) — don't suggest a new task substantially similar to any of these:\n${dismissedPatterns.map(t => `- ${t}`).join("\n")}\n`
+      : ""
+
     if (type === "email_to_task") {
       const email = req.body.email || {}
       const todayStr = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })
@@ -86,7 +110,7 @@ Turn this email into ONE clear, actionable task for the recipient.
 From: ${email.from}
 Subject: ${email.subject}
 Content: ${content}
-
+${dismissedSection}
 Rules:
 - "text": a short, specific task title (under 10 words if possible) describing what the recipient needs to DO — not a summary. E.g. "Reply to Maria about contract" not "Email from Maria about contract."
 - "description": one short sentence (under 20 words) giving context — what the email is actually about, so the task makes sense without reopening the email.
