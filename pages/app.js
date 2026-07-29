@@ -877,6 +877,7 @@ export default function Nona() {
   const [voiceStatus, setVoiceStatus] = useState("") // "listening" | "thinking" | "" | an error message to show as placeholder
   const recognitionRef = { current: null }
   const [taskGroupBy, setTaskGroupBy] = useState("tag") // date | tag | none — defaults to grouped-by-category so tasks read as titled sections (Work, Family, ...) instead of one long mixed list
+  const [dismissedBriefLines, setDismissedBriefLines] = useState(new Set()) // per-line "not now" on the brief card — cleared implicitly on refresh since brief text is regenerated
   const [editingTaskId, setEditingTaskId] = useState(null)
   const [addingForDate, setAddingForDate] = useState(null) // ISO date of the calendar day currently showing its quick-add row
   const [dateTaskInput, setDateTaskInput] = useState("")
@@ -990,7 +991,13 @@ export default function Nona() {
       const iso = toISODate(d)
       const isToday = iso === toISODate(today)
       const dayTasks = tasks.filter(t => t.date === iso && !t.done).map(t => ({ ...t, source: "task" }))
-      const dayCalendarEvents = calendarEvents.filter(e => e.date === iso).map(e => ({ ...e, source: "google" }))
+      const calFilters = profile.calendarFilters || []
+      const hiddenIds = profile.hiddenCalendarEventIds || []
+      const dayCalendarEvents = calendarEvents
+        .filter(e => e.date === iso)
+        .filter(e => !hiddenIds.includes(e.id))
+        .filter(e => !calFilters.some(rule => (e.text || "").toLowerCase().includes(rule)))
+        .map(e => ({ ...e, source: "google" }))
       days.push({ date: d, iso, isToday, label: d.toLocaleDateString("en-GB", { weekday: "short" })[0], num: d.getDate(), tasks: [...dayTasks, ...dayCalendarEvents] })
     }
     return days
@@ -1155,7 +1162,9 @@ export default function Nona() {
       const orphanIds = Object.keys(groups).filter(k => k !== "untagged" && !knownIds.includes(k))
       const order = [...knownIds, ...orphanIds, "untagged"]
       return order.filter(k => groups[k]?.length).map(k => ({
+        id: k,
         label: k === "untagged" ? "No tag" : categoryLabel(k, categories),
+        color: k === "untagged" ? null : categories.find(c => c.id === k)?.color,
         items: groups[k],
       }))
     }
@@ -1174,6 +1183,72 @@ export default function Nona() {
   }
 
   const groupedTasks = groupTasks(filteredTasks)
+  const knownCategoryIds = categories.map(c => c.id)
+
+  // Reorders profile.categories itself (not just this view) — the same array
+  // drives grouped-task order, brief grouping, and category pickers everywhere,
+  // so "move Groceries first" only needs to happen in one place to stick.
+  function moveCategory(id, dir) {
+    setProfile(p => {
+      const cats = getCategories(p)
+      const idx = cats.findIndex(c => c.id === id)
+      const swap = idx + dir
+      if (idx === -1 || swap < 0 || swap >= cats.length) return p
+      const next = [...cats]
+      ;[next[idx], next[swap]] = [next[swap], next[idx]]
+      return { ...p, categories: next }
+    })
+  }
+
+  // Single task row, shared between the flat (by date / all) list and the
+  // compact bucket list — "compact" drops the sticky-note rotation/shadow and
+  // the tag pill (redundant once the row already lives inside its own bucket).
+  function renderTaskItem(t, compact) {
+    const isEditing = editingTaskId === t.id
+    return (
+      <div key={t.id} className={`task ${compact ? "task-compact" : ""} ${t.done ? "done" : ""}`} style={{
+        flexWrap: isEditing ? "wrap" : "nowrap",
+        background: compact ? "transparent" : noteColor(t.tag, categories),
+        transform: isEditing || compact ? "none" : `rotate(${noteRotation(t.id)}deg)`,
+      }}>
+        <div className="task-check" onClick={() => toggleTask(t.id)}>
+          {t.done && <svg viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" width="12" height="12"><polyline points="20 6 9 17 4 12" /></svg>}
+        </div>
+        {isEditing ? (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
+            <input className="input" style={{ fontSize: 14, padding: "8px 10px" }} value={t.text}
+              onChange={e => updateTask(t.id, { text: e.target.value })}
+              onKeyDown={e => { if (e.key === "Enter") setEditingTaskId(null) }} autoFocus />
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input type="date" className="input" style={{ fontSize: 12, padding: "6px 8px", width: "auto" }}
+                value={t.date || ""} onChange={e => updateTask(t.id, { date: e.target.value || null })} />
+              <select className="input" style={{ fontSize: 12, padding: "6px 8px", width: "auto" }}
+                value={t.tag || ""} onChange={e => updateTask(t.id, { tag: e.target.value || null })}>
+                <option value="">No tag</option>
+                {categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+              <button className="btn-sm" onClick={() => setEditingTaskId(null)}>Done</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {t.date && (
+              <div style={{ fontSize: 11, color: "var(--gold)", fontWeight: 600, flexShrink: 0, minWidth: 48 }}>
+                {parseLocalDate(t.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+              </div>
+            )}
+            <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => setEditingTaskId(t.id)}>
+              <div className="task-text">{t.text}</div>
+              {t.description && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{t.description}</div>}
+            </div>
+            {t.fromEmail && <span className="task-email-badge">📧</span>}
+            {!compact && t.tag && <span className="task-tag">{categoryLabel(t.tag, categories)}</span>}
+            <button className="task-del" onClick={() => deleteTask(t.id)}>×</button>
+          </>
+        )}
+      </div>
+    )
+  }
 
   // ── greeting ──────────────────────────────────────────────────────────
   const hour = new Date().getHours()
@@ -1287,6 +1362,26 @@ export default function Nona() {
         .task-del { color: var(--white); opacity: 0.4; padding: 2px; font-size: 18px; line-height: 1;
           transition: opacity 0.2s; }
         .task-del:hover { opacity: 1; }
+
+        /* Bucket — grouped-by-category view. One compact card per category
+           (tinted with that category's own note color in the header only,
+           not wasted on every row inside), so grouping reads as real buckets
+           you can scan and reorder, not a long list with the tag repeated
+           on every single item. */
+        .bucket { border-radius: 10px; overflow: hidden; border: 1px solid var(--border);
+          background: var(--surface); box-shadow: var(--shadow); }
+        .bucket-header { display: flex; align-items: center; justify-content: space-between;
+          padding: 8px 12px; gap: 8px; }
+        .bucket-title { font-size: 12px; font-weight: 700; color: #2A2733; letter-spacing: 0.02em; }
+        .bucket-count { font-weight: 500; opacity: 0.55; }
+        .bucket-move { color: #2A2733; opacity: 0.45; font-size: 11px; line-height: 1;
+          padding: 3px 4px; transition: opacity 0.15s; }
+        .bucket-move:hover { opacity: 0.9; }
+        .bucket-body { padding: 2px 10px; }
+        .task-compact { border-radius: 0; padding: 8px 0; margin-bottom: 0;
+          box-shadow: none; border-bottom: 1px solid var(--border); }
+        .task-compact:last-child { border-bottom: none; }
+        .task-compact .task-text { font-size: 13.5px; }
 
         /* Header */
         .header { display: flex; align-items: center; justify-content: space-between;
@@ -1575,7 +1670,12 @@ export default function Nona() {
               {/* Morning brief — everything that needs attention today */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                 <span className="label" style={{ marginBottom: 0 }}>☀️ Today</span>
-                <button onClick={generateBrief} disabled={briefLoading} style={{ fontSize: 11, color: "var(--muted)" }}>{briefLoading ? "…" : "↺ Refresh"}</button>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  {(profile.emailFilters || []).length > 0 && (
+                    <span style={{ fontSize: 11, color: "var(--muted)" }} title="Permanently hidden senders/subjects — manage in Me → Email filter rules">🚫 {profile.emailFilters.length}</span>
+                  )}
+                  <button onClick={generateBrief} disabled={briefLoading} style={{ fontSize: 11, color: "var(--muted)" }}>{briefLoading ? "…" : "↺ Refresh"}</button>
+                </div>
               </div>
               <div className="card" style={{ marginBottom: 20 }}>
                 {briefLoading ? (
@@ -1586,12 +1686,31 @@ export default function Nona() {
                       const trimmed = line.trim()
                       if (!trimmed) return <div key={i} style={{ height: 8 }} />
                       const isHeader = !trimmed.startsWith("•")
+                      if (dismissedBriefLines.has(trimmed)) return null
+                      if (isHeader) {
+                        return (
+                          <div key={i} style={{ fontSize: 11, fontWeight: 700, color: "var(--gold)", textTransform: "uppercase", letterSpacing: "0.06em", marginTop: i === 0 ? 0 : 10, marginBottom: 2 }}>
+                            {trimmed}
+                          </div>
+                        )
+                      }
                       return (
-                        <div key={i} style={isHeader
-                          ? { fontSize: 11, fontWeight: 700, color: "var(--gold)", textTransform: "uppercase", letterSpacing: "0.06em", marginTop: i === 0 ? 0 : 10, marginBottom: 2 }
-                          : {}
-                        }>
-                          {trimmed}
+                        <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 6 }} className="brief-line">
+                          <div style={{ flex: 1 }}>{trimmed}</div>
+                          <button
+                            className="brief-line-dismiss"
+                            title="Not now / always hide items like this"
+                            style={{ color: "var(--muted)", opacity: 0.35, fontSize: 14, lineHeight: 1, padding: "1px 3px", flexShrink: 0 }}
+                            onClick={() => {
+                              const always = confirm(`Hide items like this from now on? (not just today)\n\n"${trimmed}"\n\nOK = always hide (add a permanent rule) · Cancel = just hide for today`)
+                              if (always) {
+                                const keyword = prompt("Hide anything matching this text (sender name, subject word, or topic):", trimmed.replace(/^•\s*/, "").slice(0, 40))
+                                if (keyword?.trim()) setProfile(p => ({ ...p, emailFilters: [...new Set([...(p.emailFilters || []), keyword.trim().toLowerCase()])] }))
+                              } else {
+                                setDismissedBriefLines(prev => new Set([...prev, trimmed]))
+                              }
+                            }}
+                          >×</button>
                         </div>
                       )
                     })}
@@ -1668,7 +1787,21 @@ export default function Nona() {
                             <div style={{ width: 6, height: 6, borderRadius: "50%", background: d.isToday ? "var(--gold)" : "rgba(255,107,74,0.5)", flexShrink: 0 }} />
                           )}
                           <div style={{ width: 44, flexShrink: 0, color: "var(--muted)", fontSize: 12 }}>{d.isToday ? "Today" : d.date.toLocaleDateString("en-GB", { weekday: "short" })}</div>
-                          <div style={{ color: "var(--white)" }}>{t.text}{t.source === "google" && t.time ? ` · ${t.time}` : ""}</div>
+                          <div style={{ flex: 1, color: "var(--white)", minWidth: 0 }}>{t.text}{t.source === "google" && t.time ? ` · ${t.time}` : ""}</div>
+                          <button
+                            title={t.source === "google" ? "Hide this from your calendar" : "Delete task"}
+                            style={{ color: "var(--muted)", opacity: 0.5, fontSize: 15, flexShrink: 0, padding: "0 2px" }}
+                            onClick={() => {
+                              if (t.source === "task") { deleteTask(t.id); return }
+                              const always = confirm(`Hide "${t.text}" from your calendar going forward too? (not just this once)\n\nCancel = just hide this one event.`)
+                              if (always) {
+                                const keyword = (t.text || "").toLowerCase().trim()
+                                if (keyword) setProfile(p => ({ ...p, calendarFilters: [...new Set([...(p.calendarFilters || []), keyword])] }))
+                              } else {
+                                setProfile(p => ({ ...p, hiddenCalendarEventIds: [...new Set([...(p.hiddenCalendarEventIds || []), t.id])] }))
+                              }
+                            }}
+                          >×</button>
                         </div>
                       ))
                     ))}
@@ -1997,6 +2130,25 @@ export default function Nona() {
                   <div style={{ fontSize: 32, marginBottom: 10 }}>🧠</div>
                   {taskFilter === "done" ? "Nothing done yet — your wins will show here." : "Add your first task above. Nona keeps track so you don't have to."}
                 </div>
+              ) : taskGroupBy === "tag" ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {groupedTasks.map((group, gi) => (
+                    <div key={gi} className="bucket">
+                      <div className="bucket-header" style={{ background: group.color || "rgba(255,255,255,0.06)" }}>
+                        <span className="bucket-title">{group.label} <span className="bucket-count">· {group.items.length}</span></span>
+                        {knownCategoryIds.includes(group.id) && (
+                          <span style={{ display: "flex", gap: 2, flexShrink: 0 }}>
+                            <button className="bucket-move" onClick={() => moveCategory(group.id, -1)} title="Move up">▲</button>
+                            <button className="bucket-move" onClick={() => moveCategory(group.id, 1)} title="Move down">▼</button>
+                          </span>
+                        )}
+                      </div>
+                      <div className="bucket-body">
+                        {group.items.map(t => renderTaskItem(t, true))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               ) : groupedTasks.map((group, gi) => (
                 <div key={gi} style={{ marginBottom: 4 }}>
                   {group.label && (
@@ -2004,52 +2156,7 @@ export default function Nona() {
                       {group.label}
                     </div>
                   )}
-                  {group.items.map(t => {
-                    const isEditing = editingTaskId === t.id
-                    return (
-                      <div key={t.id} className={`task ${t.done ? "done" : ""}`} style={{
-                        flexWrap: isEditing ? "wrap" : "nowrap",
-                        background: noteColor(t.tag, categories),
-                        transform: isEditing ? "none" : `rotate(${noteRotation(t.id)}deg)`,
-                      }}>
-                        <div className="task-check" onClick={() => toggleTask(t.id)}>
-                          {t.done && <svg viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" width="12" height="12"><polyline points="20 6 9 17 4 12" /></svg>}
-                        </div>
-                        {isEditing ? (
-                          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
-                            <input className="input" style={{ fontSize: 14, padding: "8px 10px" }} value={t.text}
-                              onChange={e => updateTask(t.id, { text: e.target.value })}
-                              onKeyDown={e => { if (e.key === "Enter") setEditingTaskId(null) }} autoFocus />
-                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                              <input type="date" className="input" style={{ fontSize: 12, padding: "6px 8px", width: "auto" }}
-                                value={t.date || ""} onChange={e => updateTask(t.id, { date: e.target.value || null })} />
-                              <select className="input" style={{ fontSize: 12, padding: "6px 8px", width: "auto" }}
-                                value={t.tag || ""} onChange={e => updateTask(t.id, { tag: e.target.value || null })}>
-                                <option value="">No tag</option>
-                                {categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-                              </select>
-                              <button className="btn-sm" onClick={() => setEditingTaskId(null)}>Done</button>
-                            </div>
-                          </div>
-                        ) : (
-                          <>
-                            {t.date && (
-                              <div style={{ fontSize: 11, color: "var(--gold)", fontWeight: 600, flexShrink: 0, minWidth: 48 }}>
-                                {parseLocalDate(t.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
-                              </div>
-                            )}
-                            <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => setEditingTaskId(t.id)}>
-                              <div className="task-text">{t.text}</div>
-                              {t.description && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{t.description}</div>}
-                            </div>
-                            {t.fromEmail && <span className="task-email-badge">📧</span>}
-                            {t.tag && <span className="task-tag">{categoryLabel(t.tag, categories)}</span>}
-                            <button className="task-del" onClick={() => deleteTask(t.id)}>×</button>
-                          </>
-                        )}
-                      </div>
-                    )
-                  })}
+                  {group.items.map(t => renderTaskItem(t, false))}
                 </div>
               ))}
             </>}
@@ -2239,6 +2346,19 @@ export default function Nona() {
                   if (rule?.trim()) setProfile(p => ({ ...p, emailFilters: [...(p.emailFilters || []), rule.trim()] }))
                 }}>+ Add rule</button>
               </div>
+
+              {(profile.calendarFilters || []).length > 0 && (
+                <div style={{ marginTop: 24, marginBottom: 8 }}>
+                  <div style={{ fontSize: 10, color: "var(--gold)", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>🚫 Hidden from calendar</div>
+                  <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>Google Calendar events matching these titles never show up — hit "Hide always" from an event's × to add more.</div>
+                  {profile.calendarFilters.map((rule, i) => (
+                    <div key={i} className="settings-row" style={{ marginBottom: 6 }}>
+                      <div style={{ fontSize: 13, color: "var(--white)" }}>{rule}</div>
+                      <button className="btn-sm" style={{ fontSize: 11, color: "#e87a7a" }} onClick={() => setProfile(p => ({ ...p, calendarFilters: p.calendarFilters.filter((_, j) => j !== i) }))}>Remove</button>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               <div style={{ marginTop: 24, marginBottom: 8 }}>
                 <div style={{ fontSize: 10, color: "var(--gold)", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>🔁 Recurring</div>
