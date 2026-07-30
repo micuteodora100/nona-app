@@ -35,6 +35,21 @@ function loadCache(key, maxHours) {
   } catch { return null }
 }
 
+// Every task's `text` ultimately comes from raw AI-generated JSON (triage,
+// email-to-task, free-text parsing, the command box) which is never schema-
+// validated once parsed — the prompts ask for a plain string, but nothing
+// stops a response from nesting one task's shape inside another (e.g.
+// {text: {text: "...", tag: "..."}, tag: "..."}), which crashed the whole
+// app with React error #31 ("object with keys {text, tag}") the moment that
+// task rendered. Unwraps one level of that specific nesting; anything else
+// non-string coerces to a plain string rather than ever reaching JSX raw.
+function asTaskText(value) {
+  if (typeof value === "string") return value
+  if (value && typeof value === "object" && typeof value.text === "string") return value.text
+  if (value === null || value === undefined) return ""
+  return String(value)
+}
+
 // Supabase sync — save to server (cross-device persistence)
 async function syncToSupabase(tasks, profile, handledEmails) {
   try {
@@ -807,7 +822,7 @@ export default function Nona() {
       // fallback ever hands back plain strings instead of {text, tag} objects)
       if (d.tasks?.length) {
         const newTasks = d.tasks.map(item => {
-          const text = typeof item === "string" ? item : item.text
+          const text = asTaskText(typeof item === "string" ? item : item.text)
           const tag = typeof item === "string" ? null : validTag(item.tag, categories)
           return { id: String(Date.now() + Math.random()), text, done: false, tag, fromEmail: true }
         })
@@ -830,9 +845,9 @@ export default function Nona() {
       if (d.possible_duplicate_tasks?.length) {
         const toAdd = []
         for (const item of d.possible_duplicate_tasks) {
-          const text = typeof item === "string" ? item : item.text
+          const text = asTaskText(typeof item === "string" ? item : item.text)
           const tag = typeof item === "string" ? null : validTag(item.tag, categories)
-          const similarTo = typeof item === "string" ? null : item.similar_to
+          const similarTo = typeof item === "string" ? null : (item.similar_to ? asTaskText(item.similar_to) : null)
           const isDuplicate = similarTo
             ? window.confirm(`Nona found: "${text}"\n\nIs this the same as your existing task "${similarTo}"?\n\nOK = same thing, don't add it again\nCancel = different, add as a new task`)
             : false
@@ -848,7 +863,7 @@ export default function Nona() {
           .filter(e => e.date && e.text)
           .map(e => ({
             id: String(Date.now() + Math.random()),
-            text: e.text,
+            text: asTaskText(e.text),
             date: e.date,
             done: false,
             tag: "family",
@@ -953,8 +968,8 @@ export default function Nona() {
       const d = await r.json()
       const task = {
         id: String(Date.now() + Math.random()),
-        text: d.text || email.subject,
-        description: d.description || email.snippet || "",
+        text: asTaskText(d.text) || email.subject,
+        description: asTaskText(d.description) || email.snippet || "",
         date: d.date || null,
         done: false,
         tag: validTag(d.tag, categories),
@@ -1040,13 +1055,16 @@ export default function Nona() {
       })
       const d = await r.json()
       if (d.tasks && Array.isArray(d.tasks)) {
-        return d.tasks.map(t => ({
-          id: String(Date.now() + Math.random()),
-          text: t.text,
-          date: t.date || null,
-          done: false,
-          tag: validTag(t.tag, categories) || guessTag(t.text),
-        }))
+        return d.tasks.map(t => {
+          const taskText = asTaskText(t.text)
+          return {
+            id: String(Date.now() + Math.random()),
+            text: taskText,
+            date: t.date || null,
+            done: false,
+            tag: validTag(t.tag, categories) || guessTag(taskText),
+          }
+        })
       }
     } catch (e) {}
     // fallback: naive split if AI parsing fails
@@ -1215,15 +1233,16 @@ export default function Nona() {
 
     switch (d.action) {
       case "add_tasks": {
-        const newTasks = (d.tasks || []).map(t => ({
-          id: String(Date.now() + Math.random()), text: t.text, date: t.date || null, done: false, tag: validTag(t.tag, categories) || guessTag(t.text),
-        }))
+        const newTasks = (d.tasks || []).map(t => {
+          const taskText = asTaskText(t.text)
+          return { id: String(Date.now() + Math.random()), text: taskText, date: t.date || null, done: false, tag: validTag(t.tag, categories) || guessTag(taskText) }
+        })
         setTasks(prev => [...newTasks, ...prev])
         break
       }
       case "edit_task": {
         const updates = {}
-        if (d.text !== undefined) updates.text = d.text
+        if (d.text !== undefined) updates.text = asTaskText(d.text)
         if (d.date !== undefined) updates.date = d.date || null
         if (d.tag !== undefined) updates.tag = validTag(d.tag, categories)
         if (Object.keys(updates).length) updateTask(d.taskId, updates)
@@ -1464,7 +1483,7 @@ export default function Nona() {
         </div>
         {isEditing ? (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
-            <input className="input" style={{ fontSize: 14, padding: "8px 10px" }} value={t.text}
+            <input className="input" style={{ fontSize: 14, padding: "8px 10px" }} value={asTaskText(t.text)}
               onChange={e => updateTask(t.id, { text: e.target.value })}
               onKeyDown={e => { if (e.key === "Enter") setEditingTaskId(null) }} autoFocus />
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1487,8 +1506,8 @@ export default function Nona() {
               </div>
             )}
             <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => setEditingTaskId(t.id)}>
-              <div className="task-text">{t.text}</div>
-              {t.description && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{t.description}</div>}
+              <div className="task-text">{asTaskText(t.text)}</div>
+              {t.description && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{asTaskText(t.description)}</div>}
             </div>
             {t.fromEmail && <span className="task-email-badge">📧</span>}
             {!compact && t.tag && <span className="task-tag">{categoryLabel(t.tag, categories)}</span>}
@@ -2056,7 +2075,7 @@ export default function Nona() {
                             <div style={{ width: 6, height: 6, borderRadius: "50%", background: d.isToday ? "var(--gold)" : "rgba(255,107,74,0.5)", flexShrink: 0 }} />
                           )}
                           <div style={{ width: 44, flexShrink: 0, color: "var(--muted)", fontSize: 12 }}>{d.isToday ? "Today" : d.date.toLocaleDateString("en-GB", { weekday: "short" })}</div>
-                          <div style={{ flex: 1, color: "var(--white)", minWidth: 0 }}>{t.text}{t.source !== "task" && t.time ? ` · ${t.time}` : ""}</div>
+                          <div style={{ flex: 1, color: "var(--white)", minWidth: 0 }}>{asTaskText(t.text)}{t.source !== "task" && t.time ? ` · ${t.time}` : ""}</div>
                           <button
                             title={t.source !== "task" ? "Hide this from your calendar" : "Delete task"}
                             style={{ color: "var(--muted)", opacity: 0.5, fontSize: 15, flexShrink: 0, padding: "0 2px" }}
@@ -2453,7 +2472,7 @@ export default function Nona() {
                     return (
                       <div key={t.id} className="task task-compact" style={{ opacity: 0.85 }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div className="task-text" style={{ textDecoration: t.done ? "line-through" : "none" }}>{t.text}</div>
+                          <div className="task-text" style={{ textDecoration: t.done ? "line-through" : "none" }}>{asTaskText(t.text)}</div>
                           <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
                             {t.done ? "Completed" : "Not relevant"}{when ? ` · ${new Date(when).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""}
                             {t.tag && ` · ${categoryLabel(t.tag, categories)}`}
