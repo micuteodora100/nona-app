@@ -2364,12 +2364,12 @@ export default function Nona() {
               ) : triage?.error ? (
                 <div className="card" style={{ borderColor: "rgba(232,122,122,0.3)" }}>
                   <span className="label" style={{ color: "#e87a7a" }}>Inbox triage failed</span>
-                  <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>{triage.error}</p>
+                  <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>{asTaskText(triage.error)}</p>
                   <button className="btn-sm" onClick={() => { try { localStorage.removeItem("nona_triage") } catch {} fetchEmails(true) }}>Try again</button>
                 </div>
               ) : triage ? (<>
                 <div style={{ display: "flex", gap: 8, marginBottom: 16, justifyContent: "space-between", alignItems: "center" }}>
-                  <span className="serif" style={{ fontSize: 18, color: "var(--white)" }}>{triage.summary || "Inbox checked"}</span>
+                  <span className="serif" style={{ fontSize: 18, color: "var(--white)" }}>{asTaskText(triage.summary) || "Inbox checked"}</span>
                   <button className="btn-sm" onClick={() => { try { localStorage.removeItem("nona_triage") } catch {} fetchEmails(true) }}>↺ Refresh</button>
                 </div>
 
@@ -2383,7 +2383,7 @@ export default function Nona() {
                           <div style={{ flex: 1 }}>
                             <div className="triage-from">{e.from?.split("<")[0]?.trim()}</div>
                             <div className="triage-subject">{e.subject}</div>
-                            <div className="triage-reason">{item.reason}</div>
+                            <div className="triage-reason">{asTaskText(item.reason)}</div>
                           </div>
                           <button className="task-del" style={{ fontSize: 18, marginLeft: 8, alignSelf: "flex-start" }} onClick={() => dismissEmail(e)} title="Dismiss permanently">×</button>
                         </div>
@@ -2402,7 +2402,7 @@ export default function Nona() {
                           <div style={{ flex: 1 }}>
                             <div className="triage-from">{e.from?.split("<")[0]?.trim()}</div>
                             <div className="triage-subject">{e.subject}</div>
-                            <div className="triage-reason">{item.reason}</div>
+                            <div className="triage-reason">{asTaskText(item.reason)}</div>
                           </div>
                           <button className="task-del" style={{ fontSize: 18, marginLeft: 8, alignSelf: "flex-start" }} onClick={() => dismissEmail(e)} title="Dismiss permanently">×</button>
                         </div>
@@ -2423,7 +2423,7 @@ export default function Nona() {
                     <span className="label">✅ Tasks extracted from email</span>
                     {triage.tasks.map((t, i) => (
                       <div key={i} style={{ fontSize: 14, color: "var(--white)", padding: "6px 0", borderBottom: i < triage.tasks.length - 1 ? "1px solid var(--border)" : "none" }}>
-                        {t}
+                        {asTaskText(typeof t === "string" ? t : t?.text)}
                       </div>
                     ))}
                     <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 10 }}>These have been added to your task list.</p>
