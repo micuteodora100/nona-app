@@ -256,9 +256,11 @@ export default function Nona() {
   // having agreed to it. Default is off for everyone, including accounts
   // that were already connected before this flag existed.
   useEffect(() => {
-    if (onenoteStatus?.scopeOk && profile.onenoteEnabled) fetchOnenoteNotes()
+    const selectedNotebooks = profile.onenoteSelectedNotebooks || []
+    if (onenoteStatus?.scopeOk && profile.onenoteEnabled && selectedNotebooks.length) fetchOnenoteNotes()
     else setOnenoteNotes(null)
-  }, [onenoteStatus?.scopeOk, profile.onenoteEnabled])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onenoteStatus?.scopeOk, profile.onenoteEnabled, JSON.stringify(profile.onenoteSelectedNotebooks)])
 
   useEffect(() => {
     if (providers?.google?.connected) fetchGoogleCalendar()
@@ -634,31 +636,47 @@ export default function Nona() {
   // since it's a live Graph call and this runs opportunistically in the
   // background rather than on an explicit user action.
   async function fetchOnenoteNotes(force = false) {
+    const selected = profile.onenoteSelectedNotebooks || []
+    if (!selected.length) { setOnenoteNotes(null); return }
+    // Cache key includes the selection so toggling which notebooks are
+    // checked shows fresh results immediately instead of the prior
+    // selection's cached pages for up to 3h.
+    const cacheKey = `nona_onenote_${selected.map(n => n.id).sort().join(",")}`
     if (!force) {
-      const cached = loadCache("nona_onenote", 3)
+      const cached = loadCache(cacheKey, 3)
       if (cached) { setOnenoteNotes(cached); return }
     }
     try {
-      const r = await fetch("/api/notes/onenote")
+      const r = await fetch(`/api/notes/onenote?notebooks=${encodeURIComponent(JSON.stringify(selected))}`)
       if (!r.ok) return // best-effort — a failure just means no notes context this time
       const d = await r.json()
       const pages = d.pages || []
       setOnenoteNotes(pages)
-      saveCache("nona_onenote", pages)
+      saveCache(cacheKey, pages)
     } catch (e) {
       console.error("Failed to load OneNote notes:", e.message)
     }
   }
 
-  // Compact "title: snippet" list capped to keep the triage/brief prompts
-  // cheap — full page bodies aren't needed for background context the way
-  // they are for actually triaging an email.
+  // Grouped by notebook > section so the AI (and anything that ever surfaces
+  // a note back to her) can tell where content came from, rather than a flat
+  // unlabeled blob — capped to keep the triage/brief prompts cheap, since
+  // full page bodies aren't needed for background context the way they are
+  // for actually triaging an email.
   function onenoteContextSummary() {
     if (!onenoteNotes?.length) return null
-    return onenoteNotes
-      .slice(0, 15)
-      .map(n => `- ${n.title}${n.text ? `: ${n.text.slice(0, 200)}` : ""}`)
-      .join("\n")
+    const groups = new Map()
+    onenoteNotes.slice(0, 15).forEach(n => {
+      const key = `${n.notebookName || "OneNote"} > ${n.sectionName || "Notes"}`
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key).push(n)
+    })
+    return Array.from(groups.entries())
+      .map(([heading, notes]) => (
+        `## ${heading}\n` +
+        notes.map(n => `- ${n.title}${n.text ? `: ${n.text.slice(0, 200)}` : ""}`).join("\n")
+      ))
+      .join("\n\n")
   }
 
   // ── calendar (read-only Google + Outlook Calendar events, merged into the week view) ──
@@ -2663,8 +2681,32 @@ export default function Nona() {
                 </div>
               )}
               {providers?.microsoft && onenoteStatus?.scopeOk && profile.onenoteEnabled && (
-                <div className="settings-row" style={{ fontSize: 12, color: "var(--muted)" }}>
-                  Reads every section across your notebooks right now — picking specific notebooks/sections is planned, not built yet. If any note holds something sensitive (a password, a key, an account number), turn this off until that's ready.
+                <div style={{ marginLeft: 4, marginBottom: 8 }}>
+                  <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>
+                    {onenoteStatus.notebooks?.length
+                      ? "Choose which notebooks the AI can read. Nothing is read until you check at least one."
+                      : "No notebooks found on this account."}
+                  </div>
+                  {(onenoteStatus.notebooks || []).map(nb => {
+                    const selected = profile.onenoteSelectedNotebooks || []
+                    const checked = selected.some(s => s.id === nb.id)
+                    return (
+                      <label key={nb.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, padding: "4px 0", cursor: "pointer" }}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => setProfile(p => {
+                            const cur = p.onenoteSelectedNotebooks || []
+                            const next = checked
+                              ? cur.filter(s => s.id !== nb.id)
+                              : [...cur, { id: nb.id, displayName: nb.displayName }]
+                            return { ...p, onenoteSelectedNotebooks: next }
+                          })}
+                        />
+                        {nb.displayName}
+                      </label>
+                    )
+                  })}
                 </div>
               )}
 

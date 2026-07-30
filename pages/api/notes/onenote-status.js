@@ -29,7 +29,21 @@ export default async function handler(req, res) {
     )
 
     if (response.ok) {
-      return res.json({ ok: true, connected: true, scopeOk: true })
+      // Notebook list for the Settings picker — she chooses which notebooks
+      // feed the AI rather than everything being read by default.
+      let notebooks = []
+      try {
+        const notebooksResponse = await fetch(
+          "https://graph.microsoft.com/v1.0/me/onenote/notebooks?$top=50&$select=id,displayName",
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        )
+        if (notebooksResponse.ok) {
+          notebooks = ((await notebooksResponse.json()).value || []).map(n => ({ id: n.id, displayName: n.displayName }))
+        }
+      } catch (e) {
+        console.error("Failed to list OneNote notebooks:", e.message)
+      }
+      return res.json({ ok: true, connected: true, scopeOk: true, notebooks })
     }
 
     if (response.status === 401 || response.status === 403) {

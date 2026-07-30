@@ -27,38 +27,66 @@ export default async function handler(req, res) {
   const user = await getSupabaseUser(req, res)
   if (!user) return res.status(401).json({ error: "Not authenticated" })
 
+  // Which notebooks she's opted into — sent by the client from the same
+  // Settings picker built off onenote-status.js's `notebooks` list, since the
+  // choice lives in `profile.onenoteSelectedNotebooks`, not server-side state.
+  // No selection means no notes, matching the opt-in-per-notebook default.
+  let selectedNotebooks = []
+  try {
+    selectedNotebooks = JSON.parse(req.query.notebooks || "[]")
+  } catch (e) {
+    return res.status(400).json({ error: "Invalid notebooks parameter" })
+  }
+  if (!Array.isArray(selectedNotebooks) || selectedNotebooks.length === 0) {
+    return res.json({ pages: [], source: "onenote", failed: 0 })
+  }
+
   try {
     const accessToken = await getAccessToken(user.id, "microsoft")
     if (!accessToken) {
       return res.status(401).json({ error: "Microsoft connection expired — reconnect Outlook in Settings" })
     }
 
-    // The bulk cross-notebook `/me/onenote/pages` endpoint 400s once an
-    // account has more than a handful of sections across its notebooks —
-    // found 29 Jul 2026 on a real account with 13 sections in one notebook
-    // ("The number of maximum sections is exceeded for this request").
-    // Microsoft's own fix is what's used here: list sections, then pull pages
-    // per-section instead of in one flat call.
-    const sectionsResponse = await fetch(
-      `https://graph.microsoft.com/v1.0/me/onenote/sections?$top=50&$select=id,displayName`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
+    // Scoped per selected notebook rather than the bulk cross-notebook
+    // `/me/onenote/sections` call — both because she's only opted certain
+    // notebooks in, and because that bulk call 400s outright once an account
+    // has more than a handful of sections across all notebooks combined
+    // ("The number of maximum sections is exceeded for this request", found
+    // 29 Jul 2026 on a real account with 13 sections in one notebook alone).
+    const perNotebookSections = await Promise.allSettled(
+      selectedNotebooks.map((nb) =>
+        fetch(
+          `https://graph.microsoft.com/v1.0/me/onenote/notebooks/${nb.id}/sections?$top=50&$select=id,displayName`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        ).then(async (r) => {
+          if (!r.ok) throw new Error(await r.text())
+          const sections = (await r.json()).value || []
+          return sections.map((s) => ({ ...s, notebookName: nb.displayName }))
+        })
+      )
     )
 
-    if (!sectionsResponse.ok) {
-      // A token that was issued before Notes.Read existed (i.e. before this
-      // feature shipped) simply won't carry that scope — Graph rejects it
-      // with 401/403 rather than a "missing scope" message, so that's the
-      // signal we surface a reconnect prompt on.
-      if (sectionsResponse.status === 401 || sectionsResponse.status === 403) {
-        return res.status(403).json({
-          error: "Outlook is connected but doesn't have OneNote read access yet — reconnect Outlook in Settings to grant it.",
-        })
+    const sections = []
+    let sawAuthError = false
+    perNotebookSections.forEach((r) => {
+      if (r.status === "fulfilled") sections.push(...r.value)
+      else {
+        console.error("OneNote notebook sections fetch failed:", r.reason?.message)
+        if (/401|403/.test(r.reason?.message || "")) sawAuthError = true
       }
-      const err = await sectionsResponse.text()
-      throw new Error(err)
-    }
+    })
 
-    const sections = (await sectionsResponse.json()).value || []
+    // A token issued before Notes.Read existed (i.e. before this feature
+    // shipped) simply won't carry that scope — Graph rejects it with
+    // 401/403 rather than a "missing scope" message, so that's the signal we
+    // surface a reconnect prompt on. Only meaningful if every notebook failed
+    // that way; a single notebook 404ing (e.g. deleted since she picked it)
+    // shouldn't block the others.
+    if (sections.length === 0 && sawAuthError) {
+      return res.status(403).json({
+        error: "Outlook is connected but doesn't have OneNote read access yet — reconnect Outlook in Settings to grant it.",
+      })
+    }
 
     const perSectionResults = await Promise.allSettled(
       sections.map((s) =>
@@ -70,7 +98,8 @@ export default async function handler(req, res) {
           { headers: { Authorization: `Bearer ${accessToken}` } }
         ).then(async (r) => {
           if (!r.ok) throw new Error(await r.text())
-          return (await r.json()).value || []
+          const pages = (await r.json()).value || []
+          return pages.map((p) => ({ ...p, notebookName: s.notebookName, sectionName: s.displayName }))
         })
       )
     )
@@ -101,6 +130,8 @@ export default async function handler(req, res) {
         title: page.title || "(untitled)",
         createdDateTime: page.createdDateTime,
         lastModifiedDateTime: page.lastModifiedDateTime,
+        notebookName: page.notebookName,
+        sectionName: page.sectionName,
         text,
         source: "onenote",
       }
