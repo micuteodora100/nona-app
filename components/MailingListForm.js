@@ -1,20 +1,28 @@
-import { useState } from "react"
+import { useState, useRef } from "react"
+import TurnstileWidget, { TURNSTILE_SITE_KEY } from "./TurnstileWidget"
 
 export default function MailingListForm({ compact = false }) {
   const [email, setEmail] = useState("")
   const [company, setCompany] = useState("") // honeypot
   const [status, setStatus] = useState("idle") // idle | loading | done | error
   const [error, setError] = useState("")
+  const [captchaToken, setCaptchaToken] = useState("")
+  const resetCaptcha = useRef(null)
 
   async function submit(e) {
     e.preventDefault()
+    if (TURNSTILE_SITE_KEY && !captchaToken) {
+      setError("Please complete the verification check")
+      setStatus("error")
+      return
+    }
     setStatus("loading")
     setError("")
     try {
       const res = await fetch("/api/mailing-list/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, company }),
+        body: JSON.stringify({ email, company, captchaToken }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "Something went wrong")
@@ -22,6 +30,9 @@ export default function MailingListForm({ compact = false }) {
     } catch (err) {
       setError(err.message)
       setStatus("error")
+      // The token is spent whether or not the request succeeded, so a retry
+      // needs a fresh one.
+      resetCaptcha.current?.()
     }
   }
 
@@ -52,6 +63,7 @@ export default function MailingListForm({ compact = false }) {
       <button type="submit" className="mlf-btn" disabled={status === "loading"}>
         {status === "loading" ? "…" : "Subscribe"}
       </button>
+      <TurnstileWidget className="mlf-captcha" onToken={setCaptchaToken} resetRef={resetCaptcha} />
       {status === "error" && <span className="mlf-error">{error}</span>}
 
       <style jsx>{`
@@ -63,6 +75,9 @@ export default function MailingListForm({ compact = false }) {
         .mlf-btn { background: var(--ink); color: var(--bg); font-family: 'Syne', sans-serif; font-weight: 700;
           font-size: 14px; padding: 10px 18px; border-radius: 10px; border: none; cursor: pointer; white-space: nowrap; }
         .mlf-btn:disabled { opacity: 0.6; cursor: default; }
+        /* :global() because the widget's div is rendered by a child component,
+           so styled-jsx's scoping class is never applied to it. */
+        .mlf :global(.mlf-captcha) { flex-basis: 100%; }
         .mlf-error { flex-basis: 100%; font-size: 12px; color: var(--coral); }
         .mlf-done { font-size: 14px; color: var(--muted); font-weight: 600; }
         .mlf-compact .mlf-input { flex: 1 1 160px; padding: 8px 12px; font-size: 13px; }

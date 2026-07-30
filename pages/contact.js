@@ -1,5 +1,6 @@
-import { useState } from "react"
+import { useState, useRef } from "react"
 import MarketingLayout from "../components/MarketingLayout"
+import TurnstileWidget, { TURNSTILE_SITE_KEY } from "../components/TurnstileWidget"
 
 export default function Contact() {
   const [email, setEmail] = useState("")
@@ -7,16 +8,23 @@ export default function Contact() {
   const [company, setCompany] = useState("") // honeypot
   const [status, setStatus] = useState("idle") // idle | loading | done | error
   const [error, setError] = useState("")
+  const [captchaToken, setCaptchaToken] = useState("")
+  const resetCaptcha = useRef(null)
 
   async function submit(e) {
     e.preventDefault()
+    if (TURNSTILE_SITE_KEY && !captchaToken) {
+      setError("Please complete the verification check")
+      setStatus("error")
+      return
+    }
     setStatus("loading")
     setError("")
     try {
       const res = await fetch("/api/contact", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, message, company }),
+        body: JSON.stringify({ email, message, company, captchaToken }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "Something went wrong")
@@ -24,6 +32,8 @@ export default function Contact() {
     } catch (err) {
       setError(err.message)
       setStatus("error")
+      // Single-use token — a retry needs a fresh one.
+      resetCaptcha.current?.()
     }
   }
 
@@ -72,6 +82,7 @@ export default function Contact() {
                 placeholder="What's on your mind?"
               />
             </label>
+            <TurnstileWidget onToken={setCaptchaToken} resetRef={resetCaptcha} />
             <button type="submit" className="btn-primary" disabled={status === "loading"}>
               {status === "loading" ? "Sending…" : "Send message"}
             </button>

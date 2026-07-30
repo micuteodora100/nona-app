@@ -8,7 +8,10 @@ export default function Document() {
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="Nona" />
-        <meta name="theme-color" content="#0D0C0A" />
+        {/* Matches the warm light theme (--bg). Was still the retired dark
+            theme's #0D0C0A, which tinted the mobile browser chrome black on
+            every page. */}
+        <meta name="theme-color" content="#FBF6EE" />
         <link rel="apple-touch-icon" href="/icon-192.png" />
       </Head>
       <body>

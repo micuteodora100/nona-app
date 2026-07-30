@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/router"
 import Head from "next/head"
 import { supabase } from "../lib/supabase"
+import TurnstileWidget, { TURNSTILE_SITE_KEY } from "../components/TurnstileWidget"
 
 export default function Login() {
   const router = useRouter()
@@ -13,6 +14,8 @@ export default function Login() {
   const [message, setMessage] = useState("")
   const [loading, setLoading] = useState(false)
   const [configError, setConfigError] = useState(false)
+  const [captchaToken, setCaptchaToken] = useState("")
+  const resetCaptcha = useRef(null)
 
   useEffect(() => {
     if (!supabase) { setConfigError(true); return }
@@ -23,6 +26,8 @@ export default function Login() {
     })
   }, [])
 
+  // router.query is never populated on a statically-optimized page loaded with
+  // a query string, so read the URL directly for the /login?mode=signup CTA.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     if (params.get("mode") === "signup") setMode("signup")
@@ -30,25 +35,35 @@ export default function Login() {
 
   async function handleLogin(e) {
     e.preventDefault()
+    if (TURNSTILE_SITE_KEY && !captchaToken) {
+      setError("Please complete the verification check below.")
+      return
+    }
     setError(""); setMessage(""); setLoading(true)
+    // Supabase ignores an undefined captchaToken, so this is a no-op until
+    // CAPTCHA is switched on in Authentication → Attack Protection.
+    const options = TURNSTILE_SITE_KEY ? { captchaToken } : undefined
     try {
       if (mode === "magic") {
-        const { error } = await supabase.auth.signInWithOtp({ email })
+        const { error } = await supabase.auth.signInWithOtp({ email, options })
         if (error) throw error
         setMessage("Check your email for a login link!")
       } else if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({ email, password })
+        const { error } = await supabase.auth.signUp({ email, password, options })
         if (error) throw error
         setMessage("Account created! Check your email to confirm, then log in.")
         setMode("login")
       } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password })
+        const { error } = await supabase.auth.signInWithPassword({ email, password, options })
         if (error) throw error
         router.push("/app")
       }
     } catch (err) {
       setError(err.message)
     }
+    // The token is spent either way — a successful sign-in navigates away, but
+    // signup/magic-link stay on this page and would otherwise reuse a dead one.
+    resetCaptcha.current?.()
     setLoading(false)
   }
 
@@ -57,29 +72,41 @@ export default function Login() {
       <Head>
         <title>Nona — Sign in</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Syne:wght@400;500;600&display=swap" rel="stylesheet" />
+        <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Syne:wght@400;500;600;700&display=swap" rel="stylesheet" />
       </Head>
       <style jsx global>{`
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        html, body { height: 100%; background: #0D0C0A; font-family: 'Syne', sans-serif; }
+        /* Same tokens as the marketing site (components/MarketingLayout.js) so
+           signing in doesn't jump from the warm light theme to the retired
+           dark one. */
+        :root {
+          --bg: #FBF6EE; --ink: #2A2733; --coral: #FF6B4A;
+          --coral-mid: rgba(255,107,74,0.35);
+          --muted: rgba(42,39,51,0.55); --surface: #FFFFFF; --border: rgba(42,39,51,0.1);
+        }
+        html, body { height: 100%; background: var(--bg); color: var(--ink);
+          font-family: 'Syne', sans-serif; -webkit-font-smoothing: antialiased; }
         .wrap { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px; }
-        .logo { font-family: 'Instrument Serif', serif; font-size: 48px; color: #E8C87A; margin-bottom: 6px; }
-        .tag { font-size: 12px; color: rgba(245,240,232,0.45); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 40px; }
+        .logo { font-family: 'Instrument Serif', serif; font-size: 48px; color: var(--ink); margin-bottom: 6px; }
+        .tag { font-size: 12px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 40px; }
         form { width: 100%; max-width: 320px; display: flex; flex-direction: column; gap: 12px; }
-        input { background: rgba(255,255,255,0.04); border: 1px solid rgba(232,200,122,0.12); border-radius: 12px; color: #F5F0E8; font-size: 15px; padding: 14px 16px; outline: none; font-family: 'Syne', sans-serif; width: 100%; }
-        input:focus { border-color: rgba(232,200,122,0.4); }
+        input { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+          color: var(--ink); font-size: 15px; padding: 14px 16px; outline: none; font-family: 'Syne', sans-serif; width: 100%; }
+        input::placeholder { color: var(--muted); }
+        input:focus { border-color: var(--coral-mid); }
         .password-field { position: relative; }
         .password-field input { padding-right: 56px; }
-        .password-toggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: none; border: none; color: rgba(245,240,232,0.5); font-size: 12px; cursor: pointer; padding: 8px 10px; font-family: 'Syne', sans-serif; }
-        .password-toggle:hover { color: #E8C87A; }
-        .btn-gold { background: #E8C87A; color: #0D0C0A; border: none; border-radius: 12px; font-size: 15px; font-weight: 600; padding: 14px; cursor: pointer; font-family: 'Syne', sans-serif; width: 100%; }
-        .btn-ghost { background: transparent; border: 1px solid rgba(232,200,122,0.12); border-radius: 12px; color: rgba(245,240,232,0.5); font-size: 13px; padding: 11px; cursor: pointer; font-family: 'Syne', sans-serif; width: 100%; }
-        .err { color: #e87a7a; font-size: 13px; text-align: center; }
-        .msg { color: #7CCA7C; font-size: 13px; text-align: center; }
-        .divider { display: flex; align-items: center; gap: 10px; color: rgba(245,240,232,0.3); font-size: 12px; }
-        .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: rgba(232,200,122,0.1); }
+        .password-toggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--muted); font-size: 12px; cursor: pointer; padding: 8px 10px; font-family: 'Syne', sans-serif; }
+        .password-toggle:hover { color: var(--coral); }
+        .btn-gold { background: var(--coral); color: #FFFFFF; border: none; border-radius: 12px; font-size: 15px; font-weight: 700; padding: 14px; cursor: pointer; font-family: 'Syne', sans-serif; width: 100%; }
+        .btn-gold:disabled { opacity: 0.6; cursor: default; }
+        .captcha { display: flex; justify-content: center; }
+        .err { color: #C4462A; font-size: 13px; text-align: center; }
+        .msg { color: #2E7D4F; font-size: 13px; text-align: center; }
+        .divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
+        .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
         .mode-links { display: flex; gap: 8px; justify-content: center; font-size: 12px; }
-        .mode-link { color: rgba(232,200,122,0.7); cursor: pointer; background: none; border: none; font-family: 'Syne', sans-serif; font-size: 12px; text-decoration: underline; }
+        .mode-link { color: var(--coral); cursor: pointer; background: none; border: none; font-family: 'Syne', sans-serif; font-size: 12px; font-weight: 600; text-decoration: underline; }
       `}</style>
       <div className="wrap">
         <div className="logo">nona</div>
@@ -97,6 +124,7 @@ export default function Login() {
               </button>
             </div>
           )}
+          <TurnstileWidget className="captcha" onToken={setCaptchaToken} resetRef={resetCaptcha} />
           {error && <div className="err">{error}</div>}
           {message && <div className="msg">{message}</div>}
           <button type="submit" className="btn-gold" disabled={loading}>
