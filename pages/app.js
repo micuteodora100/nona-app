@@ -4,6 +4,7 @@ import Head from "next/head"
 import { supabase } from "../lib/supabase"
 import { subscribeToPush, unsubscribeFromPush, getPushPermissionState } from "../lib/push-client"
 import { getCategories, categoryLabel, slugifyCategoryId, noteColor, nextNoteColor, validTag } from "../lib/categories"
+import { partitionBulk } from "../lib/email-prefilter"
 
 // ── helpers ──────────────────────────────────────────────────────────────
 const STORAGE_KEY = "nona_v2"
@@ -834,6 +835,16 @@ export default function Nona() {
     setEmailLoading(false)
   }
 
+  // Resolves a triage item to its email. Items are keyed by `emailId` now; the
+  // `index` fallback only exists so triage cached before that change still
+  // renders instead of blanking out until the next refresh.
+  function triageItemEmail(item) {
+    if (!item) return null
+    if (item.emailId) return emails.find(e => e.id === item.emailId) || null
+    const idx = Number(item.index)
+    return Number.isFinite(idx) ? emails[idx - 1] || null : null
+  }
+
   async function triageEmails(emailList) {
     // Filter out emails already handled (task was completed) before sending to AI
     // Also apply global filter rules defined by user in Settings.
@@ -853,7 +864,48 @@ export default function Nona() {
       }
       return true
     })
-    const listToTriage = filteredList.length > 0 ? filteredList : emailList
+    // Drop obvious bulk mail (newsletters, promos) in code before paying for
+    // tokens — see lib/email-prefilter.js for why this errs toward keeping.
+    const { keep: eligible, bulk } = partitionBulk(filteredList.length > 0 ? filteredList : emailList)
+
+    // Incremental triage: only send emails this account hasn't already had
+    // triaged. Previously every refresh re-sent the whole 90-day inbox, so the
+    // same mail was re-analysed (and re-billed) indefinitely. Prior results are
+    // merged back in below, so the view still shows everything outstanding.
+    // Deliberately survives `force`. `force` means "don't show me the 3h cached
+    // view" (the Refresh button), not "re-buy a verdict on mail you already
+    // judged" — wiring it to reset this would make every manual refresh cost
+    // full price again, which is the exact thing incremental triage is for.
+    // The 24h TTL is what eventually forces a clean re-analysis.
+    const priorState = loadCache("nona_triage_state", 24)
+    const alreadyTriaged = new Set(priorState?.triagedIds || [])
+    const priorItems = {
+      urgent: priorState?.urgent || [],
+      action: priorState?.action || [],
+    }
+    const listToTriage = eligible.filter(e => !alreadyTriaged.has(e.id))
+
+    // Nothing new to judge — reuse the prior verdicts rather than paying for a
+    // call that would return the same answer. Unconditional on there being
+    // prior state: with nothing to send there is never a reason to call the AI,
+    // and without this an inbox that is entirely newsletters would post an
+    // empty email list to Claude and get noise back.
+    if (listToTriage.length === 0) {
+      const stillLive = (item) => eligible.some(e => e.id === item.emailId)
+      const reused = {
+        urgent: priorItems.urgent.filter(stillLive),
+        action: priorItems.action.filter(stillLive),
+        tasks: [],
+        summary: `${eligible.length} emails checked · nothing new since last check`,
+        skippedBulk: bulk.length,
+      }
+      setTriage(reused)
+      // Write the display cache here too, or every app open would re-fetch the
+      // whole inbox from Gmail/Outlook just to land back on this same branch.
+      saveCache("nona_triage", { triage: reused, emails: emailList })
+      return
+    }
+
     try {
       const r = await fetch("/api/ai", {
         method: "POST",
@@ -885,9 +937,45 @@ export default function Nona() {
       d.urgent = d.urgent || []
       d.action = d.action || []
       d.tasks = d.tasks || []
-      d.summary = d.summary || (d.error ? null : `${emailList.length} emails loaded.`)
+
+      // The AI returns 1-based indexes into the list it was sent. That list is
+      // a filtered subset of `emails`, so rendering `emails[index - 1]` showed
+      // the wrong email against a reason whenever anything was filtered out —
+      // and incremental triage, which sends a much smaller subset, would have
+      // made that mismatch the norm. Resolve each index to a real email id here,
+      // once, and let the view look up by id instead.
+      const resolveItems = (items) => (items || [])
+        .map(item => {
+          const idx = Number(item?.index)
+          const email = Number.isFinite(idx) ? listToTriage[idx - 1] : null
+          return email ? { ...item, emailId: email.id } : null
+        })
+        .filter(Boolean)
+
+      if (!d.error) {
+        const stillLive = (item) => eligible.some(e => e.id === item.emailId)
+        const dedupe = (items) => {
+          const seen = new Set()
+          return items.filter(i => !seen.has(i.emailId) && seen.add(i.emailId))
+        }
+        d.urgent = dedupe([...priorItems.urgent.filter(stillLive), ...resolveItems(d.urgent)])
+        d.action = dedupe([...priorItems.action.filter(stillLive), ...resolveItems(d.action)])
+        d.skippedBulk = bulk.length
+      }
+
+      d.summary = d.summary || (d.error ? null : `${eligible.length} emails checked.`)
       setTriage(d)
-      if (!d.error) saveCache("nona_triage", { triage: d, emails: emailList })
+      if (!d.error) {
+        saveCache("nona_triage", { triage: d, emails: emailList })
+        // Remembered separately from the 3h display cache and kept for 24h, so
+        // a normal refresh after the display cache expires still doesn't re-pay
+        // for mail that was already judged.
+        saveCache("nona_triage_state", {
+          triagedIds: [...alreadyTriaged, ...listToTriage.map(e => e.id)].slice(-500),
+          urgent: d.urgent,
+          action: d.action,
+        })
+      }
       // Auto-add extracted tasks — each carries its own AI-guessed category
       // (defensive `typeof` check in case an older cached response or a raw-JSON
       // fallback ever hands back plain strings instead of {text, tag} objects)
@@ -994,7 +1082,7 @@ export default function Nona() {
     setTriage(prev => {
       if (!prev) return prev
       const filterOut = (arr) => arr?.filter(item => {
-        const e = emails[item.index - 1]
+        const e = triageItemEmail(item)
         return e ? e.id !== key : true
       })
       return { ...prev, urgent: filterOut(prev.urgent), action: filterOut(prev.action) }
@@ -2369,17 +2457,24 @@ export default function Nona() {
                 </div>
               ) : triage ? (<>
                 <div style={{ display: "flex", gap: 8, marginBottom: 16, justifyContent: "space-between", alignItems: "center" }}>
-                  <span className="serif" style={{ fontSize: 18, color: "var(--white)" }}>{asTaskText(triage.summary) || "Inbox checked"}</span>
+                  <span className="serif" style={{ fontSize: 18, color: "var(--white)" }}>
+                    {asTaskText(triage.summary) || "Inbox checked"}
+                    {triage.skippedBulk > 0 && (
+                      <span style={{ fontSize: 12, color: "var(--muted)", fontFamily: "inherit" }}>
+                        {" "}· {triage.skippedBulk} newsletter{triage.skippedBulk === 1 ? "" : "s"} skipped
+                      </span>
+                    )}
+                  </span>
                   <button className="btn-sm" onClick={() => { try { localStorage.removeItem("nona_triage") } catch {} fetchEmails(true) }}>↺ Refresh</button>
                 </div>
 
                 {triage.urgent?.length > 0 && (
                   <div className="triage-section">
                     <div className="triage-label" style={{ color: "#e87a7a" }}>🔴 Urgent</div>
-                    {triage.urgent.map(item => {
-                      const e = emails[item.index - 1]
+                    {triage.urgent.map((item, i) => {
+                      const e = triageItemEmail(item)
                       return e ? (
-                        <div key={item.index} className="triage-item" style={{ borderColor: "rgba(232,122,122,0.2)" }}>
+                        <div key={item.emailId || `idx-${item.index}-${i}`} className="triage-item" style={{ borderColor: "rgba(232,122,122,0.2)" }}>
                           <div style={{ flex: 1 }}>
                             <div className="triage-from">{e.from?.split("<")[0]?.trim()}</div>
                             <div className="triage-subject">{e.subject}</div>
@@ -2395,10 +2490,10 @@ export default function Nona() {
                 {triage.action?.length > 0 && (
                   <div className="triage-section">
                     <div className="triage-label" style={{ color: "var(--gold)" }}>🟡 Action needed</div>
-                    {triage.action.map(item => {
-                      const e = emails[item.index - 1]
+                    {triage.action.map((item, i) => {
+                      const e = triageItemEmail(item)
                       return e ? (
-                        <div key={item.index} className="triage-item">
+                        <div key={item.emailId || `idx-${item.index}-${i}`} className="triage-item">
                           <div style={{ flex: 1 }}>
                             <div className="triage-from">{e.from?.split("<")[0]?.trim()}</div>
                             <div className="triage-subject">{e.subject}</div>
