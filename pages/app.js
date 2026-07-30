@@ -174,6 +174,14 @@ export default function Nona() {
   const [onenoteStatus, setOnenoteStatus] = useState(null) // null = not checked yet, else {connected, scopeOk, error}
   const [onenoteNotes, setOnenoteNotes] = useState(null) // null = not loaded, else [{title, text, ...}] — fed into triage/brief as read-only extra context
 
+  // Declared here, not down with the rest of the ob*/tasks state, because the
+  // OneNote-notes effect below reads profile.onenoteEnabled in its dependency
+  // array. A useEffect deps array is evaluated synchronously during render, so
+  // a const declared later in the same component throws immediately on first
+  // render for every user — the same TDZ bug class fixed in 488d096 for
+  // providers/onenoteStatus, reintroduced here when the opt-in gate was added.
+  const [profile, setProfile] = useState({ name: "", child: "", briefTime: "07:00", work: "", creche: "", language: "en-GB", emailFilters: [], recurring: [] })
+
   // Listen for Supabase auth state changes. localStorage is a single
   // browser-wide key, not scoped per account — on a shared device, if the
   // logged-in account changes without the cache being cleared, the safe-merge
@@ -323,8 +331,6 @@ export default function Nona() {
   const [obWork, setObWork] = useState("")
   const [obCreche, setObCreche] = useState("")
   const [obTime, setObTime] = useState("07:00")
-
-  const [profile, setProfile] = useState({ name: "", child: "", briefTime: "07:00", work: "", creche: "", language: "en-GB", emailFilters: [], recurring: [] })
 
   const [obStep, setObStep] = useState(1) // 1 basic info, 2 categories, 3 email patterns
   const [obCategories, setObCategories] = useState(() => getCategories(profile).map(c => ({ ...c, kept: true })))
