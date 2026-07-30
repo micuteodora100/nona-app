@@ -387,6 +387,16 @@ export default function Nona() {
   const [taskInput, setTaskInput] = useState("")
   const [taskFilter, setTaskFilter] = useState("all")
 
+  // Amazon spend tracking (Home widget) — items is per line-item, one Amazon
+  // order email can produce several. spendPeriod is months back (1/3/6/12).
+  const [spendItems, setSpendItems] = useState([])
+  const [spendTotal, setSpendTotal] = useState(0)
+  const [spendPeriod, setSpendPeriod] = useState(3)
+  const [spendLoading, setSpendLoading] = useState(false)
+  const [spendSyncing, setSpendSyncing] = useState(false)
+  const [spendError, setSpendError] = useState(null)
+  const [spendSynced, setSpendSynced] = useState(false) // whether a sync has ever run this session
+
   // ── boot ─────────────────────────────────────────────────────────────
   useEffect(() => {
     const s = loadState()
@@ -491,6 +501,16 @@ export default function Nona() {
       // Triage loads on demand (Mail tab) — not on boot
     }
   }, [onboarded])
+
+  // Spend widget: load whatever's already synced on boot (cheap DB read, no
+  // AI call), and again whenever the period filter changes. The actual
+  // email sync/extraction only runs when the user taps "Sync" — first sync
+  // scans up to 12 months of mail, too slow/costly to fire automatically.
+  useEffect(() => {
+    if (onboarded && (providers?.google || providers?.microsoft)) {
+      fetchSpendList(spendPeriod)
+    }
+  }, [onboarded, providers?.google, providers?.microsoft, spendPeriod])
 
   // Auto-refresh the brief when the app is reopened/refocused later in the
   // day, instead of only ever regenerating it once on the initial mount
@@ -607,6 +627,39 @@ export default function Nona() {
       const d = await r.json()
       setWeather({ temp: Math.round(d.current.temperature_2m), code: d.current.weathercode })
     } catch { setWeather({ temp: null, code: 0 }) }
+  }
+
+  // ── Amazon spend tracking ───────────────────────────────────────────
+  async function fetchSpendList(months = spendPeriod) {
+    setSpendLoading(true)
+    setSpendError(null)
+    try {
+      const r = await fetch(`/api/spend/list?months=${months}`)
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || "Failed to load spend")
+      setSpendItems(d.items || [])
+      setSpendTotal(d.total || 0)
+    } catch (e) {
+      setSpendError(e.message)
+    } finally {
+      setSpendLoading(false)
+    }
+  }
+
+  async function syncSpend() {
+    setSpendSyncing(true)
+    setSpendError(null)
+    try {
+      const r = await fetch("/api/spend/sync", { method: "POST" })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || "Sync failed")
+      setSpendSynced(true)
+      await fetchSpendList(spendPeriod)
+    } catch (e) {
+      setSpendError(e.message)
+    } finally {
+      setSpendSyncing(false)
+    }
   }
 
   // ── provider connection status ──────────────────────────────────────
@@ -1625,6 +1678,12 @@ export default function Nona() {
           color: var(--muted); font-size: 12px; padding: 6px 12px; transition: all 0.15s; }
         .chip.on { background: var(--gold); border-color: var(--gold); color: var(--white); font-weight: 600; }
 
+        /* Spend feed — vertical snap-scroll, one card per item */
+        .spend-feed { display: flex; flex-direction: column; gap: 10px; overflow-y: auto;
+          scroll-snap-type: y mandatory; -webkit-overflow-scrolling: touch; }
+        .spend-feed::-webkit-scrollbar { display: none; }
+        .spend-feed-card { scroll-snap-align: start; flex-shrink: 0; }
+
         /* Task — styled like a sticky note pinned to a board: solid color
            per category (see lib/categories.js), a slight per-item rotation
            and a real drop shadow instead of a flat bordered card, so each
@@ -2193,6 +2252,61 @@ export default function Nona() {
                   <polyline points="9 18 15 12 9 6" />
                 </svg>
               </button>
+
+              {/* Amazon spend — vertical snap-scroll feed, one card per item */}
+              {(providers?.google || providers?.microsoft) && (
+                <>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                    <span className="label" style={{ marginBottom: 0 }}>🛒 Amazon spend</span>
+                    <button onClick={syncSpend} disabled={spendSyncing} style={{ fontSize: 11, color: "var(--muted)" }}>
+                      {spendSyncing ? "Syncing…" : "↺ Sync"}
+                    </button>
+                  </div>
+                  <div className="card" style={{ marginBottom: 20 }}>
+                    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 12 }}>
+                      <div className="serif" style={{ fontSize: 24 }}>
+                        €{spendTotal.toFixed(2)}
+                      </div>
+                      <div className="chips" style={{ margin: 0 }}>
+                        {[[1, "1mo"], [3, "3mo"], [6, "6mo"], [12, "12mo"]].map(([m, label]) => (
+                          <button key={m} className={`chip${spendPeriod === m ? " on" : ""}`} onClick={() => setSpendPeriod(m)}>{label}</button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {spendError && (
+                      <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>⚠ {spendError}</div>
+                    )}
+
+                    {spendLoading ? (
+                      <div style={{ padding: "20px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>Loading…</div>
+                    ) : spendItems.length === 0 ? (
+                      <div style={{ padding: "20px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>
+                        {spendSynced ? "No Amazon orders in this period." : "Tap Sync to pull your Amazon order history."}
+                      </div>
+                    ) : (
+                      <div className="spend-feed" style={{ height: 260 }}>
+                        {spendItems.map((it) => (
+                          <div key={it.id} className="spend-feed-card" style={{
+                            height: 240, flexShrink: 0, borderRadius: 12, background: "var(--bg)",
+                            border: "1px solid var(--border)", padding: "18px", display: "flex",
+                            flexDirection: "column", justifyContent: "center", alignItems: "center", textAlign: "center", gap: 10,
+                          }}>
+                            <span style={{ fontSize: 26 }}>📦</span>
+                            <div style={{ fontSize: 15, fontWeight: 600, color: "var(--white)", lineHeight: 1.4 }}>{it.item_name}</div>
+                            <div className="serif" style={{ fontSize: 22, color: "var(--gold)" }}>
+                              {(it.currency === "EUR" ? "€" : it.currency === "GBP" ? "£" : it.currency === "USD" ? "$" : `${it.currency} `)}{Number(it.price).toFixed(2)}
+                            </div>
+                            <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                              {it.order_date ? new Date(it.order_date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : ""}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
             </>}
 
             {/* ── EMAIL ── */}

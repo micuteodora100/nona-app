@@ -1,0 +1,82 @@
+import { getSupabaseUser } from "../../../lib/supabase-auth"
+import { getSupabaseServer } from "../../../lib/supabase-server"
+import { getAccessToken } from "../../../lib/tokens"
+import { fetchAmazonGmailEmails, fetchAmazonOutlookEmails } from "../../../lib/email-fetch"
+import { runAmazonExtractPrompt } from "../../../lib/spend-extract"
+import { getAnthropicClient } from "../../../lib/ai-brief"
+
+const client = getAnthropicClient()
+
+// Pulls Amazon order emails from every connected provider (12mo backfill),
+// skips ones already synced (by email_id), extracts line items via AI, and
+// stores new rows. Safe to call repeatedly — dedup happens both before the
+// AI call (skip already-seen email_ids) and at insert time (unique
+// constraint on user_id+email_id+item_name).
+export default async function handler(req, res) {
+  if (req.method !== "POST") return res.status(405).end()
+
+  const user = await getSupabaseUser(req, res)
+  if (!user) return res.status(401).json({ error: "Not authenticated" })
+
+  const supabase = getSupabaseServer()
+  if (!supabase) return res.status(500).json({ error: "Storage not configured" })
+
+  try {
+    const { data: existingRows } = await supabase
+      .from("spend_items")
+      .select("email_id")
+      .eq("user_id", user.id)
+      .eq("source", "amazon")
+    const seenEmailIds = new Set((existingRows || []).map((r) => r.email_id))
+
+    let rawEmails = []
+
+    const googleToken = await getAccessToken(user.id, "google")
+    if (googleToken) {
+      const { emails } = await fetchAmazonGmailEmails(googleToken, { newerThanDays: 365 })
+      rawEmails.push(...emails)
+    }
+
+    const microsoftToken = await getAccessToken(user.id, "microsoft")
+    if (microsoftToken) {
+      const { emails } = await fetchAmazonOutlookEmails(microsoftToken, { sinceDays: 365 })
+      rawEmails.push(...emails)
+    }
+
+    if (!googleToken && !microsoftToken) {
+      return res.status(401).json({ error: "Connect Gmail or Outlook first to sync Amazon spend" })
+    }
+
+    const newEmails = rawEmails.filter((e) => !seenEmailIds.has(e.id))
+
+    let inserted = 0
+    if (newEmails.length > 0) {
+      const items = await runAmazonExtractPrompt(client, newEmails)
+      if (items.length > 0) {
+        const rows = items.map((it) => ({
+          user_id: user.id,
+          source: "amazon",
+          email_id: it.email_id,
+          order_id: it.order_id,
+          item_name: it.item_name,
+          price: it.price,
+          currency: it.currency,
+          order_date: it.order_date,
+        }))
+        const { error, count } = await supabase
+          .from("spend_items")
+          .upsert(rows, { onConflict: "user_id,email_id,item_name", count: "exact" })
+        if (error) {
+          console.error("spend_items insert error:", error.message, error.details || "")
+          return res.status(500).json({ error: error.message })
+        }
+        inserted = count || rows.length
+      }
+    }
+
+    res.json({ scanned: rawEmails.length, newEmails: newEmails.length, inserted })
+  } catch (err) {
+    console.error("Amazon spend sync error:", err.message)
+    res.status(500).json({ error: err.message })
+  }
+}
