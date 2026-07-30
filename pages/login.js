@@ -87,8 +87,7 @@ export default function Login() {
         html, body { height: 100%; background: var(--bg); color: var(--ink);
           font-family: 'Syne', sans-serif; -webkit-font-smoothing: antialiased; }
         .wrap { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px; }
-        .logo { font-family: 'Instrument Serif', serif; font-size: 48px; color: var(--ink); margin-bottom: 6px; }
-        .tag { font-size: 12px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 40px; }
+        .logo { font-family: 'Instrument Serif', serif; font-size: 48px; color: var(--ink); margin-bottom: 40px; }
         form { width: 100%; max-width: 320px; display: flex; flex-direction: column; gap: 12px; }
         input { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
           color: var(--ink); font-size: 15px; padding: 14px 16px; outline: none; font-family: 'Syne', sans-serif; width: 100%; }
@@ -110,7 +109,6 @@ export default function Login() {
       `}</style>
       <div className="wrap">
         <div className="logo">nona</div>
-        <div className="tag">your personal AI</div>
         {configError ? (
           <div className="err">Sign-in isn't configured on this deployment. Contact the site owner.</div>
         ) : (

@@ -2103,26 +2103,53 @@ export default function Nona() {
                 )}
               </div>
 
-              <button onClick={() => { setTab("mail"); fetchEmails(true) }} style={{
-                width: "100%", display: "flex", alignItems: "center", gap: 14, textAlign: "left",
-                background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 14,
-                padding: "12px 16px", marginBottom: 20, boxShadow: "var(--shadow)",
-              }}>
-                <div style={{ width: 40, height: 40, borderRadius: "50%", background: "var(--gold-dim)", border: "1.5px solid var(--gold-mid)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
-                    <rect x="2" y="4" width="20" height="16" rx="2" /><path d="m22 6-10 7L2 6" />
-                  </svg>
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, color: "var(--white)", fontWeight: 500 }}>Mail</div>
-                  <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {triage?.error ? "⚠ Inbox check failed" : (triage?.summary || "Tap to check your inbox")}
+              {!providers?.google && !providers?.microsoft ? (
+                <div className="card" style={{ marginBottom: 20 }}>
+                  <span className="label">Connect your apps</span>
+                  <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 14, lineHeight: 1.6 }}>
+                    Nona reads what's relevant from the apps you connect — never writes, never stores the content.
+                  </p>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                    <button onClick={() => signIn("google")} style={{
+                      display: "flex", flexDirection: "column", alignItems: "center", gap: 8, textAlign: "center",
+                      background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 12, padding: "16px 8px",
+                    }}>
+                      <span style={{ fontSize: 26 }}>📧</span>
+                      <div style={{ fontSize: 13, color: "var(--white)", fontWeight: 500 }}>Gmail</div>
+                      <div style={{ fontSize: 11, color: "var(--muted)" }}>Connect</div>
+                    </button>
+                    <button onClick={() => signIn("microsoft")} style={{
+                      display: "flex", flexDirection: "column", alignItems: "center", gap: 8, textAlign: "center",
+                      background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 12, padding: "16px 8px",
+                    }}>
+                      <span style={{ fontSize: 26 }}>📮</span>
+                      <div style={{ fontSize: 13, color: "var(--white)", fontWeight: 500 }}>Outlook</div>
+                      <div style={{ fontSize: 11, color: "var(--muted)" }}>Connect</div>
+                    </button>
                   </div>
                 </div>
-                <svg viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16" style={{ flexShrink: 0 }}>
-                  <polyline points="9 18 15 12 9 6" />
-                </svg>
-              </button>
+              ) : (
+                <button onClick={() => { setTab("mail"); fetchEmails(true) }} style={{
+                  width: "100%", display: "flex", alignItems: "center", gap: 14, textAlign: "left",
+                  background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 14,
+                  padding: "12px 16px", marginBottom: 20, boxShadow: "var(--shadow)",
+                }}>
+                  <div style={{ width: 40, height: 40, borderRadius: "50%", background: "var(--gold-dim)", border: "1.5px solid var(--gold-mid)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+                      <rect x="2" y="4" width="20" height="16" rx="2" /><path d="m22 6-10 7L2 6" />
+                    </svg>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, color: "var(--white)", fontWeight: 500 }}>Mail</div>
+                    <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {triage?.error ? "⚠ Inbox check failed" : (triage?.summary || "Tap to check your inbox")}
+                    </div>
+                  </div>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16" style={{ flexShrink: 0 }}>
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                </button>
+              )}
 
               {/* Everything captured via "What's on your mind" (voice or typed) — tap through to see it, not shown inline */}
               <button onClick={() => setTab("tasks")} style={{

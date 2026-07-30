@@ -1,20 +1,28 @@
-import { useState } from "react"
+import { useState, useRef } from "react"
 import MarketingLayout from "../components/MarketingLayout"
+import TurnstileWidget, { TURNSTILE_SITE_KEY } from "../components/TurnstileWidget"
 
 export default function Unsubscribe() {
   const [email, setEmail] = useState("")
   const [status, setStatus] = useState("idle") // idle | loading | done | error
   const [error, setError] = useState("")
+  const [captchaToken, setCaptchaToken] = useState("")
+  const resetCaptcha = useRef(null)
 
   async function submit(e) {
     e.preventDefault()
+    if (TURNSTILE_SITE_KEY && !captchaToken) {
+      setError("Please complete the verification check")
+      setStatus("error")
+      return
+    }
     setStatus("loading")
     setError("")
     try {
       const res = await fetch("/api/mailing-list/unsubscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, captchaToken }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "Something went wrong")
@@ -22,6 +30,9 @@ export default function Unsubscribe() {
     } catch (err) {
       setError(err.message)
       setStatus("error")
+      // The token is spent whether or not the request succeeded, so a retry
+      // needs a fresh one.
+      resetCaptcha.current?.()
     }
   }
 
@@ -47,6 +58,7 @@ export default function Unsubscribe() {
               onChange={e => setEmail(e.target.value)}
               placeholder="you@email.com"
             />
+            <TurnstileWidget onToken={setCaptchaToken} resetRef={resetCaptcha} />
             <button type="submit" className="btn-primary" disabled={status === "loading"}>
               {status === "loading" ? "…" : "Unsubscribe"}
             </button>
