@@ -10,9 +10,19 @@ import { createServerClient } from "@supabase/ssr"
 // to why. Sending every request to the canonical host up front makes that
 // impossible no matter which address someone typed or was sent.
 //
-// Deliberately narrow: only the www/apex pair of the configured host, so
-// preview deployments (*.vercel.app) and localhost are left completely alone.
-// The domain itself is never hardcoded — it comes from NEXTAUTH_URL, the same
+// This is not hypothetical: the Vercel logs from the 31 Jul 2026 failed connect
+// show the person was on `nona-aqmrmb280-teonona.vercel.app` — a Vercel
+// deployment URL — while NEXTAUTH_URL points at the custom domain. Every alias
+// Vercel serves the production deployment on (the project alias, the
+// per-deployment URL) is a different cookie jar from the canonical host, so a
+// connect started on any of them is guaranteed to fail this way.
+//
+// In production, therefore, every non-canonical host funnels to the canonical
+// one. Outside production only the www/apex pair does, which leaves preview
+// deployments on their own hostname — OAuth can't work on a preview anyway
+// (its URL is in neither NEXTAUTH_URL nor Google's/Microsoft's redirect
+// allowlists), and redirecting previews to production would defeat their
+// purpose. The domain is never hardcoded: it comes from NEXTAUTH_URL, the same
 // value the OAuth callback URLs are built from, so the two can't drift apart.
 function canonicalHostRedirect(req) {
   if (!process.env.NEXTAUTH_URL) return null
@@ -30,9 +40,11 @@ function canonicalHostRedirect(req) {
   if (!host || host === canonicalHost) return null
 
   const bare = (h) => h.replace(/^www\./, "")
-  // Anything that isn't the same site with/without "www" (previews, localhost,
-  // custom hosts) is none of this function's business.
-  if (bare(host) !== bare(canonicalHost)) return null
+  const isWwwApexPair = bare(host) === bare(canonicalHost)
+  // VERCEL_ENV is injected into the edge runtime by Vercel itself; unset (local
+  // dev, self-hosted) falls back to the narrow www/apex-only behavior.
+  const isProduction = process.env.VERCEL_ENV === "production"
+  if (!isWwwApexPair && !isProduction) return null
 
   // Built from the canonical origin rather than by mutating the incoming URL,
   // so the scheme and host both come from the one value the OAuth callback URLs
@@ -74,6 +86,12 @@ export async function middleware(req) {
     "/manifest.json",
     "/icon-192.png",
     "/icon-512.png",
+    // Both showed up in the logs being answered with a redirect to /login
+    // instead of the asset: browsers and crawlers probe /favicon.png even
+    // though nothing links to it, and the service worker must be fetchable
+    // from its own scope for push registration to survive a signed-out load.
+    "/favicon.png",
+    "/sw.js",
   ]
 
   if (allowList.some((p) => pathname.startsWith(p))) {
