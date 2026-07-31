@@ -130,15 +130,16 @@ Parse the following free text into distinct, separate tasks. The person may writ
 Text: "${rawText}"
 
 For each task:
-- Extract a clean, short task description (remove date phrases from the text itself, keep it actionable)
+- Extract a clean, short task description (remove date and time phrases from the text itself, keep it actionable)
 - If a date is mentioned (even relative like "tomorrow", "Thursday", "next week", "the 8th"), resolve it to an actual date using today's date as reference, and include it
 - If no date is mentioned, leave date as null
+- If a time of day is mentioned ("at 3", "3pm", "half past four", "10:30 in the morning"), resolve it to 24-hour "HH:MM" as "time". If a duration or end time is mentioned ("for an hour", "3 to 4pm", "2pm-3:30"), also set "endTime" to the 24-hour end time. Leave either as null when not mentioned — never invent a time.
 - Pick the single best-fitting category id for "tag" from: ${catList}. Use null if genuinely none fit.
 
 Return ONLY valid JSON, no markdown:
 {
   "tasks": [
-    {"text": "short task description", "date": "2026-07-12" or null, "tag": "family"}
+    {"text": "short task description", "date": "2026-07-12" or null, "time": "15:00" or null, "endTime": "16:00" or null, "tag": "family"}
   ]
 }
 

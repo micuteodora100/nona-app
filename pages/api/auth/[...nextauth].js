@@ -4,22 +4,47 @@ import GoogleProvider from "next-auth/providers/google"
 import { persistProviderTokens } from "../../../lib/tokens"
 import { getSupabaseUserReadOnly } from "../../../lib/supabase-auth"
 
-// Microsoft personal accounts via OAuth 2.0 + Microsoft Graph API
-// Uses /consumers endpoint for personal @outlook.com/@hotmail.com accounts
-const MicrosoftPersonalProvider = {
+// Microsoft accounts via OAuth 2.0 + Microsoft Graph (Outlook mail, OneNote,
+// calendar). Uses /common, not /consumers: /consumers accepts *only* personal
+// @outlook/@hotmail/@live accounts and rejects every work or school account
+// outright, which is a hard stop for anyone whose mailbox is through their
+// employer or university. /common accepts both.
+//
+// Switching to /common forces the profile off the id_token. The /common
+// discovery document reports its issuer as the literal template
+// "https://login.microsoftonline.com/{tenantid}/v2.0" (verified against the live
+// endpoint), while a real id_token carries the signing tenant's actual GUID — so
+// openid-client's issuer check fails every time and the connect dies with an
+// "unexpected iss value" OAuthCallback error. Reading the profile from Graph's
+// /me with the access token instead sidesteps id_token validation altogether,
+// which is why User.Read is in the scope list.
+//
+// NOTE: the Azure app registration must be set to "Accounts in any
+// organizational directory and personal Microsoft accounts" for this to work —
+// a registration still restricted to personal accounts will reject work/school
+// sign-ins before the callback is ever reached, no matter what this says.
+const MicrosoftProvider = {
   id: "microsoft",
   name: "Microsoft",
   type: "oauth",
-  wellKnown: "https://login.microsoftonline.com/consumers/v2.0/.well-known/openid-configuration",
+  wellKnown: "https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration",
   authorization: {
     params: {
-      scope: "openid profile email offline_access https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/Notes.Read https://graph.microsoft.com/Calendars.Read",
+      scope: "openid profile email offline_access https://graph.microsoft.com/User.Read https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/Notes.Read https://graph.microsoft.com/Calendars.Read",
     },
   },
-  idToken: true,
+  idToken: false,
   checks: ["pkce", "state"],
+  userinfo: "https://graph.microsoft.com/v1.0/me",
   profile(profile) {
-    return { id: profile.sub, name: profile.name, email: profile.email }
+    // Work/school accounts often have `mail` empty, with the address only in
+    // userPrincipalName; personal accounts are the reverse. Either way this is
+    // display-only — identity is the Supabase user (see the jwt callback).
+    return {
+      id: profile.id,
+      name: profile.displayName || profile.userPrincipalName,
+      email: profile.mail || profile.userPrincipalName,
+    }
   },
   clientId: process.env.MICROSOFT_CLIENT_ID,
   clientSecret: process.env.MICROSOFT_CLIENT_SECRET,
@@ -41,7 +66,7 @@ export function getAuthOptions(req) {
           },
         },
       }),
-      MicrosoftPersonalProvider,
+      MicrosoftProvider,
     ],
     callbacks: {
       async jwt({ token, account, profile }) {
@@ -106,6 +131,34 @@ export function getAuthOptions(req) {
     },
     pages: {
       signIn: "/app",
+      // Without this, every OAuth failure lands on NextAuth's built-in error
+      // page, which for all the codes that matter here (OAuthCallback,
+      // Callback, …) renders nothing but the word "Error" and the hostname —
+      // no cause, no next step, nothing to relay. See pages/auth-error.js.
+      error: "/auth-error",
+    },
+    // NextAuth's default logger prints the whole error object, which on Vercel
+    // is easy to miss and awkward to search. These two lines are the ones worth
+    // grepping when a connection fails: the code (OAUTH_CALLBACK_ERROR,
+    // OAUTH_CALLBACK_HANDLER_ERROR, …), the provider, and the underlying
+    // message — e.g. "State cookie was missing." (the flow started on a
+    // different host or in an in-app browser) vs a token-exchange rejection
+    // from Google/Microsoft. Only the message is logged, never tokens or the
+    // authorization code.
+    logger: {
+      error(code, metadata) {
+        const err = metadata?.error || metadata
+        const provider = metadata?.providerId || metadata?.provider || "unknown"
+        console.error(`[auth] ${code} provider=${provider}: ${err?.message || String(err)}`)
+        // The real reason is often one level down (openid-client wraps the
+        // provider's own error), and it's the part that actually identifies
+        // the failure.
+        if (err?.cause?.message) console.error(`[auth] ${code} cause: ${err.cause.message}`)
+      },
+      warn(code) {
+        console.warn(`[auth] warning: ${code}`)
+      },
+      debug() {},
     },
     secret: process.env.NEXTAUTH_SECRET,
   }
