@@ -106,6 +106,34 @@ export function getAuthOptions(req) {
     },
     pages: {
       signIn: "/app",
+      // Without this, every OAuth failure lands on NextAuth's built-in error
+      // page, which for all the codes that matter here (OAuthCallback,
+      // Callback, …) renders nothing but the word "Error" and the hostname —
+      // no cause, no next step, nothing to relay. See pages/auth-error.js.
+      error: "/auth-error",
+    },
+    // NextAuth's default logger prints the whole error object, which on Vercel
+    // is easy to miss and awkward to search. These two lines are the ones worth
+    // grepping when a connection fails: the code (OAUTH_CALLBACK_ERROR,
+    // OAUTH_CALLBACK_HANDLER_ERROR, …), the provider, and the underlying
+    // message — e.g. "State cookie was missing." (the flow started on a
+    // different host or in an in-app browser) vs a token-exchange rejection
+    // from Google/Microsoft. Only the message is logged, never tokens or the
+    // authorization code.
+    logger: {
+      error(code, metadata) {
+        const err = metadata?.error || metadata
+        const provider = metadata?.providerId || metadata?.provider || "unknown"
+        console.error(`[auth] ${code} provider=${provider}: ${err?.message || String(err)}`)
+        // The real reason is often one level down (openid-client wraps the
+        // provider's own error), and it's the part that actually identifies
+        // the failure.
+        if (err?.cause?.message) console.error(`[auth] ${code} cause: ${err.cause.message}`)
+      },
+      warn(code) {
+        console.warn(`[auth] warning: ${code}`)
+      },
+      debug() {},
     },
     secret: process.env.NEXTAUTH_SECRET,
   }
