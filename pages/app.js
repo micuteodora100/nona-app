@@ -5,6 +5,7 @@ import { supabase } from "../lib/supabase"
 import { subscribeToPush, unsubscribeFromPush, getPushPermissionState } from "../lib/push-client"
 import { getCategories, categoryLabel, slugifyCategoryId, noteColor, nextNoteColor, validTag } from "../lib/categories"
 import { partitionBulk } from "../lib/email-prefilter"
+import { spendCategoryMeta, spendItemUrl, DEFAULT_AMAZON_DOMAIN } from "../lib/spend-categories"
 
 // ── helpers ──────────────────────────────────────────────────────────────
 const STORAGE_KEY = "nona_v2"
@@ -49,6 +50,60 @@ function asTaskText(value) {
   if (value && typeof value === "object" && typeof value.text === "string") return value.text
   if (value === null || value === undefined) return ""
   return String(value)
+}
+
+// Times on tasks/events are plain 24-hour "HH:MM" strings (same
+// no-timezone-attached spirit as the "YYYY-MM-DD" dates above) — this is what
+// both `<input type="time">` and the calendar APIs already hand back. Anything
+// else (an AI-invented "3pm", a stray object, an empty string) becomes null so
+// a task simply has no time rather than rendering something unparseable.
+function validTime(value) {
+  if (typeof value !== "string") return null
+  const m = value.trim().match(/^(\d{1,2}):(\d{2})$/)
+  if (!m) return null
+  const h = Number(m[1]), min = Number(m[2])
+  if (h > 23 || min > 59) return null
+  return `${String(h).padStart(2, "0")}:${m[2]}`
+}
+
+// "14:00" + "15:30" → "14:00–15:30"; end time is optional.
+function formatTimeRange(time, endTime) {
+  if (!time) return ""
+  return endTime && endTime !== time ? `${time}–${endTime}` : time
+}
+
+// Shifts an ISO date by whole days, staying in local time (see parseLocalDate).
+function shiftISODate(isoDate, days) {
+  const d = parseLocalDate(isoDate)
+  d.setDate(d.getDate() + days)
+  return toISODate(d)
+}
+
+// Which week-view offset (0 = this week) a given date falls in, Monday-based
+// to match getWeekDays — used to follow a task the person just moved to
+// another week instead of letting it silently disappear off the view.
+function weekOffsetForDate(isoDate) {
+  const mondayOf = (date) => {
+    const x = new Date(date)
+    x.setHours(0, 0, 0, 0)
+    const day = x.getDay()
+    x.setDate(x.getDate() + (day === 0 ? -6 : 1 - day))
+    return x
+  }
+  const today = new Date()
+  const diffMs = mondayOf(parseLocalDate(isoDate)).getTime() - mondayOf(today).getTime()
+  // Rounded rather than floored so a DST hour shift inside the span can't
+  // land the answer a week off.
+  return Math.round(diffMs / (7 * 24 * 3600 * 1000))
+}
+
+// Adds whole hours to an "HH:MM" time, clamped to the same day rather than
+// rolling over into the next one — a task's date is what puts it on a day.
+function shiftTime(time, hours) {
+  const base = validTime(time) || "09:00"
+  const [h, m] = base.split(":").map(Number)
+  const next = Math.min(23, Math.max(0, h + hours))
+  return `${String(next).padStart(2, "0")}:${String(m).padStart(2, "0")}`
 }
 
 // Supabase sync — save to server (cross-device persistence)
@@ -397,6 +452,10 @@ export default function Nona() {
   const [spendSyncing, setSpendSyncing] = useState(false)
   const [spendError, setSpendError] = useState(null)
   const [spendSynced, setSpendSynced] = useState(false) // whether a sync has ever run this session
+  // Which product category the item feed is narrowed to (null = everything).
+  // `false` is not used — an explicitly-null category (uncategorised rows) is
+  // selectable too, so the "nothing selected" state is undefined.
+  const [spendCategory, setSpendCategory] = useState(undefined)
 
   // ── boot ─────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -640,6 +699,12 @@ export default function Nona() {
       if (!r.ok) throw new Error(d.error || "Failed to load spend")
       setSpendItems(d.items || [])
       setSpendTotal(d.total || 0)
+      // Drop the category filter if the newly-loaded period has nothing in it
+      // (e.g. filtered to Diapers, then switched to 1mo) — otherwise the feed
+      // goes empty with no visible cause.
+      setSpendCategory(prev =>
+        prev === undefined || (d.items || []).some(it => (it.category || null) === prev) ? prev : undefined
+      )
     } catch (e) {
       setSpendError(e.message)
     } finally {
@@ -1024,6 +1089,8 @@ export default function Nona() {
             id: String(Date.now() + Math.random()),
             text: asTaskText(e.text),
             date: e.date,
+            time: validTime(e.time),
+            endTime: validTime(e.endTime),
             done: false,
             tag: "family",
             fromEmail: true,
@@ -1182,6 +1249,7 @@ export default function Nona() {
   const [taskGroupBy, setTaskGroupBy] = useState("tag") // date | tag | none — defaults to grouped-by-category so tasks read as titled sections (Work, Family, ...) instead of one long mixed list
   const [dismissedBriefLines, setDismissedBriefLines] = useState(new Set()) // per-line "not now" on the brief card — cleared implicitly on refresh since brief text is regenerated
   const [editingTaskId, setEditingTaskId] = useState(null)
+  const [editingCalendarId, setEditingCalendarId] = useState(null) // id of the week-view item currently open for editing in place
   const [addingForDate, setAddingForDate] = useState(null) // ISO date of the calendar day currently showing its quick-add row
   const [dateTaskInput, setDateTaskInput] = useState("")
   const [newRecurringText, setNewRecurringText] = useState("")
@@ -1220,6 +1288,8 @@ export default function Nona() {
             id: String(Date.now() + Math.random()),
             text: taskText,
             date: t.date || null,
+            time: validTime(t.time),
+            endTime: validTime(t.endTime),
             done: false,
             tag: validTag(t.tag, categories) || guessTag(taskText),
           }
@@ -1303,7 +1373,16 @@ export default function Nona() {
         .filter(e => e.date === iso)
         .filter(e => !hiddenIds.includes(e.id))
         .filter(e => !calFilters.some(rule => (e.text || "").toLowerCase().includes(rule)))
-      days.push({ date: d, iso, isToday, label: d.toLocaleDateString("en-GB", { weekday: "short" })[0], num: d.getDate(), tasks: [...dayTasks, ...dayCalendarEvents] })
+      // Timed items in clock order, untimed ones first (they're all-day by
+      // nature) — before this, a 9am school run could sit below a 6pm dinner
+      // purely because of which source loaded first.
+      const dayItems = [...dayTasks, ...dayCalendarEvents].sort((a, b) => {
+        if (!a.time && !b.time) return 0
+        if (!a.time) return -1
+        if (!b.time) return 1
+        return a.time.localeCompare(b.time)
+      })
+      days.push({ date: d, iso, isToday, label: d.toLocaleDateString("en-GB", { weekday: "short" })[0], num: d.getDate(), tasks: dayItems })
     }
     return days
   }
@@ -1524,6 +1603,15 @@ export default function Nona() {
     setTasks(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t))
   }
 
+  // Moving something to another day from the week view (e.g. "actually, the
+  // park is tomorrow") — jumps the view to whichever week now holds it, so
+  // pushing an item past Sunday doesn't just make it vanish mid-edit.
+  function moveTaskToDate(id, isoDate) {
+    if (!isoDate) { updateTask(id, { date: null }); return }
+    updateTask(id, { date: isoDate })
+    setWeekOffset(weekOffsetForDate(isoDate))
+  }
+
   // Dismissing a task as noise (not genuinely done, just not relevant) is
   // distinct from both deleting it and completing it — mirrors the existing
   // permanent-dismiss pattern already used for email. Unlike delete, the task
@@ -1648,6 +1736,12 @@ export default function Nona() {
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <input type="date" className="input" style={{ fontSize: 12, padding: "6px 8px", width: "auto" }}
                 value={t.date || ""} onChange={e => updateTask(t.id, { date: e.target.value || null })} />
+              {/* Same time fields as the week view's inline editor, so a time set
+                  in one place can be changed from the other. */}
+              <input type="time" className="input" style={{ fontSize: 12, padding: "6px 8px", width: "auto" }}
+                value={t.time || ""} onChange={e => updateTask(t.id, { time: validTime(e.target.value) })} />
+              <input type="time" className="input" style={{ fontSize: 12, padding: "6px 8px", width: "auto" }}
+                value={t.endTime || ""} onChange={e => updateTask(t.id, { endTime: validTime(e.target.value) })} />
               <select className="input" style={{ fontSize: 12, padding: "6px 8px", width: "auto" }}
                 value={t.tag || ""} onChange={e => updateTask(t.id, { tag: e.target.value || null })}>
                 <option value="">No tag</option>
@@ -1662,6 +1756,7 @@ export default function Nona() {
             {t.date && (
               <div style={{ fontSize: 11, color: "var(--gold)", fontWeight: 600, flexShrink: 0, minWidth: 48 }}>
                 {parseLocalDate(t.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                {t.time && <div style={{ fontWeight: 500, opacity: 0.8 }}>{formatTimeRange(t.time, t.endTime)}</div>}
               </div>
             )}
             <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => setEditingTaskId(t.id)}>
@@ -1677,6 +1772,49 @@ export default function Nona() {
       </div>
     )
   }
+
+  // ── Amazon spend, derived ─────────────────────────────────────────────
+  // Per-category totals for the breakdown, biggest spend first — this is the
+  // "how much went on milk vs diapers" view, as opposed to one flat Amazon
+  // total. Rows the AI couldn't classify (or that predate categories) group
+  // under a null key and render as "Uncategorised" rather than disappearing.
+  const spendBreakdown = (() => {
+    const byCategory = new Map()
+    for (const it of spendItems) {
+      const key = it.category || null
+      const row = byCategory.get(key) || { category: key, total: 0, count: 0 }
+      row.total += Number(it.price) || 0
+      row.count += 1
+      byCategory.set(key, row)
+    }
+    return [...byCategory.values()].sort((a, b) => b.total - a.total)
+  })()
+
+  const spendBiggestCategoryTotal = spendBreakdown.length ? spendBreakdown[0].total : 0
+
+  // Which Amazon marketplace to send search fallbacks to: whichever domain her
+  // own order emails' product links point at (amazon.de, .fr, .co.uk …), so a
+  // product with no recoverable ASIN still lands in the right store.
+  const amazonDomain = (() => {
+    const counts = new Map()
+    for (const it of spendItems) {
+      if (!it.product_url) continue
+      try {
+        const host = new URL(it.product_url).host
+        counts.set(host, (counts.get(host) || 0) + 1)
+      } catch {}
+    }
+    let best = null, bestCount = 0
+    for (const [host, n] of counts) if (n > bestCount) { best = host; bestCount = n }
+    return best || DEFAULT_AMAZON_DOMAIN
+  })()
+
+  const visibleSpendItems = spendCategory === undefined
+    ? spendItems
+    : spendItems.filter(it => (it.category || null) === spendCategory)
+  const visibleSpendTotal = spendCategory === undefined
+    ? spendTotal
+    : visibleSpendItems.reduce((sum, it) => sum + (Number(it.price) || 0), 0)
 
   // ── greeting ──────────────────────────────────────────────────────────
   const hour = new Date().getHours()
@@ -2231,6 +2369,57 @@ export default function Nona() {
                   <div style={{ marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
                     {getWeekDays(weekOffset).filter(d => d.tasks.length > 0).map(d => (
                       d.tasks.map(t => (
+                        // Items she created herself (source "task") are editable in
+                        // place — tap the row to change the wording, move the day, or
+                        // put a time on it. Google/Outlook events stay read-only (the
+                        // whole calendar integration is read-only by design), so those
+                        // rows tap through to the event in its own calendar instead.
+                        editingCalendarId === t.id && t.source === "task" ? (
+                          <div key={`${t.source}-${t.id}`} style={{ padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
+                            <input
+                              className="input"
+                              style={{ fontSize: 13, padding: "8px 10px", marginBottom: 8 }}
+                              value={asTaskText(t.text)}
+                              onChange={e => updateTask(t.id, { text: e.target.value })}
+                              onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); setEditingCalendarId(null) } }}
+                              autoFocus
+                            />
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+                              <span style={{ fontSize: 11, color: "var(--muted)", width: 34 }}>Day</span>
+                              <button className="btn-sm" title="A day earlier" onClick={() => moveTaskToDate(t.id, shiftISODate(t.date || d.iso, -1))}>‹</button>
+                              <input type="date" className="input" style={{ fontSize: 12, padding: "6px 8px", width: "auto", flex: 1, minWidth: 120 }}
+                                value={t.date || d.iso} onChange={e => moveTaskToDate(t.id, e.target.value || null)} />
+                              <button className="btn-sm" title="A day later" onClick={() => moveTaskToDate(t.id, shiftISODate(t.date || d.iso, 1))}>›</button>
+                            </div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+                              <span style={{ fontSize: 11, color: "var(--muted)", width: 34 }}>Time</span>
+                              <input type="time" className="input" style={{ fontSize: 12, padding: "6px 8px", width: "auto" }}
+                                value={t.time || ""} onChange={e => updateTask(t.id, { time: validTime(e.target.value) })} />
+                              <span style={{ fontSize: 12, color: "var(--muted)" }}>→</span>
+                              <input type="time" className="input" style={{ fontSize: 12, padding: "6px 8px", width: "auto" }}
+                                value={t.endTime || ""} onChange={e => updateTask(t.id, { endTime: validTime(e.target.value) })} />
+                              {/* "Add an hour": with no time yet this blocks out 09:00–10:00, otherwise it
+                                  extends whatever's already there by another hour. */}
+                              <button className="btn-sm" title="Add an hour" onClick={() => updateTask(t.id, {
+                                time: t.time || "09:00",
+                                endTime: shiftTime(t.endTime || t.time || "09:00", 1),
+                              })}>+1h</button>
+                              {(t.time || t.endTime) && (
+                                <button className="btn-sm" style={{ color: "var(--muted)" }} title="Remove the time — back to all day"
+                                  onClick={() => updateTask(t.id, { time: null, endTime: null })}>Clear</button>
+                              )}
+                            </div>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              <select className="input" style={{ fontSize: 12, padding: "6px 8px", width: "auto" }}
+                                value={t.tag || ""} onChange={e => updateTask(t.id, { tag: e.target.value || null })}>
+                                <option value="">No category</option>
+                                {categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                              </select>
+                              <button className="btn-sm" style={{ color: "#e87a7a" }} onClick={() => { deleteTask(t.id); setEditingCalendarId(null) }}>Delete</button>
+                              <button className="btn-sm" onClick={() => setEditingCalendarId(null)}>Done</button>
+                            </div>
+                          </div>
+                        ) : (
                         <div key={`${t.source}-${t.id}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", fontSize: 13 }}>
                           {t.source !== "task" ? (
                             <svg viewBox="0 0 24 24" fill="none" stroke={d.isToday ? "var(--gold)" : "rgba(255,107,74,0.7)"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="12" height="12" style={{ flexShrink: 0 }}>
@@ -2240,7 +2429,28 @@ export default function Nona() {
                             <div style={{ width: 6, height: 6, borderRadius: "50%", background: d.isToday ? "var(--gold)" : "rgba(255,107,74,0.5)", flexShrink: 0 }} />
                           )}
                           <div style={{ width: 44, flexShrink: 0, color: "var(--muted)", fontSize: 12 }}>{d.isToday ? "Today" : d.date.toLocaleDateString("en-GB", { weekday: "short" })}</div>
-                          <div style={{ flex: 1, color: "var(--white)", minWidth: 0 }}>{asTaskText(t.text)}{t.source !== "task" && t.time ? ` · ${t.time}` : ""}</div>
+                          {t.source === "task" ? (
+                            <div
+                              style={{ flex: 1, color: "var(--white)", minWidth: 0, cursor: "pointer" }}
+                              title="Tap to edit — reword it, move the day, add a time"
+                              onClick={() => setEditingCalendarId(t.id)}
+                            >
+                              {asTaskText(t.text)}
+                              {t.time ? <span style={{ color: "var(--muted)" }}>{` · ${formatTimeRange(t.time, t.endTime)}`}</span> : ""}
+                            </div>
+                          ) : t.link ? (
+                            <a href={t.link} target="_blank" rel="noopener noreferrer"
+                              style={{ flex: 1, color: "var(--white)", minWidth: 0, textDecoration: "none" }}
+                              title="Open in your calendar (Nona can't edit it — read-only)">
+                              {asTaskText(t.text)}
+                              {t.time ? <span style={{ color: "var(--muted)" }}>{` · ${formatTimeRange(t.time, t.endTime)}`}</span> : ""}
+                            </a>
+                          ) : (
+                            <div style={{ flex: 1, color: "var(--white)", minWidth: 0 }}>
+                              {asTaskText(t.text)}
+                              {t.time ? <span style={{ color: "var(--muted)" }}>{` · ${formatTimeRange(t.time, t.endTime)}`}</span> : ""}
+                            </div>
+                          )}
                           <button
                             title={t.source !== "task" ? "Hide this from your calendar" : "Delete task"}
                             style={{ color: "var(--muted)", opacity: 0.5, fontSize: 15, flexShrink: 0, padding: "0 2px" }}
@@ -2256,6 +2466,7 @@ export default function Nona() {
                             }}
                           >×</button>
                         </div>
+                        )
                       ))
                     ))}
                   </div>
@@ -2341,7 +2552,10 @@ export default function Nona() {
                 </svg>
               </button>
 
-              {/* Amazon spend — vertical snap-scroll feed, one card per item */}
+              {/* Amazon spend — per-product-category breakdown (milk, diapers, …)
+                  on top, then a vertical snap-scroll feed of the actual items,
+                  each tapping through to its Amazon product page. Tapping a
+                  category narrows the feed to it. */}
               {(providers?.google || providers?.microsoft) && (
                 <>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
@@ -2353,7 +2567,7 @@ export default function Nona() {
                   <div className="card" style={{ marginBottom: 20 }}>
                     <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 12 }}>
                       <div className="serif" style={{ fontSize: 24 }}>
-                        €{spendTotal.toFixed(2)}
+                        €{visibleSpendTotal.toFixed(2)}
                       </div>
                       <div className="chips" style={{ margin: 0 }}>
                         {[[1, "1mo"], [3, "3mo"], [6, "6mo"], [12, "12mo"]].map(([m, label]) => (
@@ -2373,24 +2587,95 @@ export default function Nona() {
                         {spendSynced ? "No Amazon orders in this period." : "Tap Sync to pull your Amazon order history."}
                       </div>
                     ) : (
-                      <div className="spend-feed" style={{ height: 260 }}>
-                        {spendItems.map((it) => (
-                          <div key={it.id} className="spend-feed-card" style={{
-                            height: 240, flexShrink: 0, borderRadius: 12, background: "var(--bg)",
-                            border: "1px solid var(--border)", padding: "18px", display: "flex",
-                            flexDirection: "column", justifyContent: "center", alignItems: "center", textAlign: "center", gap: 10,
-                          }}>
-                            <span style={{ fontSize: 26 }}>📦</span>
-                            <div style={{ fontSize: 15, fontWeight: 600, color: "var(--white)", lineHeight: 1.4 }}>{it.item_name}</div>
-                            <div className="serif" style={{ fontSize: 22, color: "var(--gold)" }}>
-                              {(it.currency === "EUR" ? "€" : it.currency === "GBP" ? "£" : it.currency === "USD" ? "$" : `${it.currency} `)}{Number(it.price).toFixed(2)}
-                            </div>
-                            <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                              {it.order_date ? new Date(it.order_date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : ""}
-                            </div>
+                      <>
+                        {/* Where the money actually went. Bar width is relative to
+                            the biggest category, so the ranking reads at a glance. */}
+                        <div style={{ marginBottom: 14 }}>
+                          {spendBreakdown.map((row) => {
+                            const meta = spendCategoryMeta(row.category)
+                            const selected = spendCategory === row.category
+                            const share = spendBiggestCategoryTotal > 0 ? row.total / spendBiggestCategoryTotal : 0
+                            return (
+                              <button
+                                key={meta.id || "uncategorised"}
+                                onClick={() => setSpendCategory(selected ? undefined : row.category)}
+                                title={selected ? "Show everything again" : `Show only ${meta.label}`}
+                                style={{
+                                  width: "100%", textAlign: "left", padding: "7px 8px", borderRadius: 8,
+                                  background: selected ? "var(--gold-dim)" : "transparent",
+                                  border: selected ? "1px solid var(--gold-mid)" : "1px solid transparent",
+                                  marginBottom: 2,
+                                }}
+                              >
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                                  <span style={{ fontSize: 14, flexShrink: 0 }}>{meta.emoji}</span>
+                                  <span style={{ flex: 1, minWidth: 0, color: "var(--white)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                    {meta.label}
+                                  </span>
+                                  <span style={{ fontSize: 11, color: "var(--muted)", flexShrink: 0 }}>{row.count}</span>
+                                  <span style={{ color: "var(--white)", fontWeight: 600, flexShrink: 0, minWidth: 62, textAlign: "right" }}>
+                                    €{row.total.toFixed(2)}
+                                  </span>
+                                </div>
+                                <div style={{ height: 4, borderRadius: 2, background: "var(--border)", marginTop: 6 }}>
+                                  <div style={{ width: `${Math.max(share * 100, 3)}%`, height: 4, borderRadius: 2, background: "var(--gold)" }} />
+                                </div>
+                              </button>
+                            )
+                          })}
+                        </div>
+
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                          <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                            {spendCategory === undefined
+                              ? `${visibleSpendItems.length} item${visibleSpendItems.length === 1 ? "" : "s"} · tap one to open it on Amazon`
+                              : `${spendCategoryMeta(spendCategory).label} · ${visibleSpendItems.length} item${visibleSpendItems.length === 1 ? "" : "s"}`}
                           </div>
-                        ))}
-                      </div>
+                          {spendCategory !== undefined && (
+                            <button onClick={() => setSpendCategory(undefined)} style={{ fontSize: 11, color: "var(--gold)" }}>Show all</button>
+                          )}
+                        </div>
+
+                        <div className="spend-feed" style={{ height: 260 }}>
+                          {visibleSpendItems.map((it) => {
+                            const meta = spendCategoryMeta(it.category || null)
+                            return (
+                              // A real link (not a click handler) so it can be
+                              // long-pressed/opened in a new tab like any other
+                              // product link. Falls back to an Amazon search for
+                              // the item name when no product code was recoverable
+                              // from the order email — see lib/spend-categories.js.
+                              <a
+                                key={it.id}
+                                className="spend-feed-card"
+                                href={spendItemUrl(it, amazonDomain)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title={it.product_url ? "Open this product on Amazon" : "Search for this product on Amazon"}
+                                style={{
+                                  height: 240, flexShrink: 0, borderRadius: 12, background: "var(--bg)",
+                                  border: "1px solid var(--border)", padding: "18px", display: "flex",
+                                  flexDirection: "column", justifyContent: "center", alignItems: "center",
+                                  textAlign: "center", gap: 10, textDecoration: "none",
+                                }}
+                              >
+                                <span style={{ fontSize: 26 }}>{meta.emoji}</span>
+                                <div style={{ fontSize: 15, fontWeight: 600, color: "var(--white)", lineHeight: 1.4 }}>{it.item_name}</div>
+                                <div className="serif" style={{ fontSize: 22, color: "var(--gold)" }}>
+                                  {(it.currency === "EUR" ? "€" : it.currency === "GBP" ? "£" : it.currency === "USD" ? "$" : `${it.currency} `)}{Number(it.price).toFixed(2)}
+                                </div>
+                                <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                                  {meta.label}
+                                  {it.order_date ? ` · ${new Date(it.order_date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` : ""}
+                                </div>
+                                <div style={{ fontSize: 11, color: "var(--gold)", fontWeight: 600 }}>
+                                  {it.product_url ? "View on Amazon ↗" : "Find on Amazon ↗"}
+                                </div>
+                              </a>
+                            )
+                          })}
+                        </div>
+                      </>
                     )}
                   </div>
                 </>

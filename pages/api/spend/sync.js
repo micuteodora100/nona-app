@@ -2,10 +2,16 @@ import { getSupabaseUser } from "../../../lib/supabase-auth"
 import { getSupabaseServer } from "../../../lib/supabase-server"
 import { getAccessToken } from "../../../lib/tokens"
 import { fetchAmazonGmailEmails, fetchAmazonOutlookEmails } from "../../../lib/email-fetch"
-import { runAmazonExtractPrompt } from "../../../lib/spend-extract"
+import { runAmazonExtractPrompt, runSpendCategorizePrompt } from "../../../lib/spend-extract"
 import { getAnthropicClient } from "../../../lib/ai-brief"
+import { validSpendCategory, amazonProductUrl, isAsin } from "../../../lib/spend-categories"
 
 const client = getAnthropicClient()
+
+// Rows to categorise per sync when backfilling history recorded before
+// categories existed — capped so one sync can't fan out into an unbounded
+// number of AI calls; repeated syncs work through the rest.
+const BACKFILL_LIMIT = 200
 
 // Pulls Amazon order emails from every connected provider (12mo backfill),
 // skips ones already synced (by email_id), extracts line items via AI, and
@@ -53,16 +59,28 @@ export default async function handler(req, res) {
     if (newEmails.length > 0) {
       const items = await runAmazonExtractPrompt(client, newEmails)
       if (items.length > 0) {
-        const rows = items.map((it) => ({
-          user_id: user.id,
-          source: "amazon",
-          email_id: it.email_id,
-          order_id: it.order_id,
-          item_name: it.item_name,
-          price: it.price,
-          currency: it.currency,
-          order_date: it.order_date,
-        }))
+        const emailById = new Map(newEmails.map((e) => [e.id, e]))
+        const rows = items.map((it) => {
+          const email = emailById.get(it.email_id)
+          // Only trust an ASIN that genuinely appeared in that email's own
+          // product links — a hallucinated code would deep-link to the wrong
+          // product, which is worse than falling back to a name search.
+          const claimed = typeof it.asin === "string" ? it.asin.trim().toUpperCase() : ""
+          const asin = isAsin(claimed) && (email?.asins || []).includes(claimed) ? claimed : null
+          return {
+            user_id: user.id,
+            source: "amazon",
+            email_id: it.email_id,
+            order_id: it.order_id,
+            item_name: it.item_name,
+            category: validSpendCategory(it.category),
+            asin,
+            product_url: amazonProductUrl(asin, email?.amazonDomain),
+            price: it.price,
+            currency: it.currency,
+            order_date: it.order_date,
+          }
+        })
         const { error, count } = await supabase
           .from("spend_items")
           .upsert(rows, { onConflict: "user_id,email_id,item_name", count: "exact" })
@@ -74,7 +92,34 @@ export default async function handler(req, res) {
       }
     }
 
-    res.json({ scanned: rawEmails.length, newEmails: newEmails.length, inserted })
+    // Backfill: rows stored before categories existed have category = null and
+    // would otherwise sit in the breakdown as "Uncategorised" forever, since
+    // their emails are already marked as seen and never re-extracted. Product
+    // names alone are enough to classify them (no email needed), so one sync
+    // makes the breakdown cover her whole history, not just new orders.
+    let categorized = 0
+    const { data: uncategorized } = await supabase
+      .from("spend_items")
+      .select("id, item_name")
+      .eq("user_id", user.id)
+      .is("category", null)
+      .limit(BACKFILL_LIMIT)
+
+    if (uncategorized?.length) {
+      const assigned = await runSpendCategorizePrompt(client, uncategorized)
+      for (const [id, category] of assigned) {
+        const valid = validSpendCategory(category)
+        if (!valid) continue
+        const { error } = await supabase
+          .from("spend_items")
+          .update({ category: valid })
+          .eq("id", id)
+          .eq("user_id", user.id)
+        if (!error) categorized++
+      }
+    }
+
+    res.json({ scanned: rawEmails.length, newEmails: newEmails.length, inserted, categorized })
   } catch (err) {
     console.error("Amazon spend sync error:", err.message)
     res.status(500).json({ error: err.message })
