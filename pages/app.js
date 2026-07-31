@@ -2500,9 +2500,13 @@ export default function Nona() {
                     }}>
                       <span style={{ fontSize: 26 }}>📮</span>
                       <div style={{ fontSize: 13, color: "var(--white)", fontWeight: 500 }}>Outlook</div>
-                      <div style={{ fontSize: 11, color: "var(--muted)" }}>Connect</div>
+                      <div style={{ fontSize: 11, color: "var(--muted)" }}>+ OneNote</div>
                     </button>
                   </div>
+                  <p style={{ fontSize: 11, color: "var(--muted)", marginTop: 12, lineHeight: 1.6 }}>
+                    Google shows an "app isn't verified" warning while Nona is in beta — tap Advanced → Continue.
+                    Outlook covers OneNote too, with the same read-only access.
+                  </p>
                 </div>
               ) : (
                 <button onClick={() => { setTab("mail"); fetchEmails(true) }} style={{
@@ -2720,8 +2724,14 @@ export default function Nona() {
                   </button>
                   <button className="connect-btn" onClick={() => signIn("microsoft")}>
                     <span className="connect-icon">📮</span>
-                    <div><div className="connect-label">Connect Outlook</div><div className="connect-sub">Read-only · Microsoft OAuth · teodoramicu@outlook.com</div></div>
+                    {/* Was hardcoded to the first account this app ever connected —
+                        wrong for everyone else, and confusing on a shared beta. */}
+                    <div><div className="connect-label">Connect Outlook</div><div className="connect-sub">Read-only · Microsoft OAuth · also covers OneNote</div></div>
                   </button>
+                  <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 12, lineHeight: 1.6 }}>
+                    While Nona is in beta, Google shows a warning that the app isn't verified yet.
+                    Tap <strong>Advanced</strong> → <strong>Continue</strong> to carry on — the access it asks for is read-only either way.
+                  </p>
                 </div>
               ) : emailLoading ? (
                 <div className="card card-accent">

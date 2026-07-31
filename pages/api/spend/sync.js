@@ -5,6 +5,7 @@ import { fetchAmazonGmailEmails, fetchAmazonOutlookEmails } from "../../../lib/e
 import { runAmazonExtractPrompt, runSpendCategorizePrompt } from "../../../lib/spend-extract"
 import { getAnthropicClient } from "../../../lib/ai-brief"
 import { validSpendCategory, amazonProductUrl, isAsin } from "../../../lib/spend-categories"
+import { spendDedupeKey } from "../../../lib/spend-dedupe"
 
 const client = getAnthropicClient()
 
@@ -56,8 +57,16 @@ export default async function handler(req, res) {
     const newEmails = rawEmails.filter((e) => !seenEmailIds.has(e.id))
 
     let inserted = 0
+    let skippedRestatements = 0
     if (newEmails.length > 0) {
-      const items = await runAmazonExtractPrompt(client, newEmails)
+      const extracted = await runAmazonExtractPrompt(client, newEmails)
+      // Dispatch/delivery/invoice emails restate an order's line items in full;
+      // counting those as purchases is what inflated the totals. The dedupe key
+      // below is the real backstop, but dropping them here keeps rows out of
+      // the table in the first place, so a wrong price in a shipping email
+      // can't overwrite the confirmed one.
+      const items = extracted.filter((it) => it.email_kind === "order_confirmation")
+      skippedRestatements = extracted.length - items.length
       if (items.length > 0) {
         const emailById = new Map(newEmails.map((e) => [e.id, e]))
         const rows = items.map((it) => {
@@ -67,7 +76,7 @@ export default async function handler(req, res) {
           // product, which is worse than falling back to a name search.
           const claimed = typeof it.asin === "string" ? it.asin.trim().toUpperCase() : ""
           const asin = isAsin(claimed) && (email?.asins || []).includes(claimed) ? claimed : null
-          return {
+          const row = {
             user_id: user.id,
             source: "amazon",
             email_id: it.email_id,
@@ -80,15 +89,23 @@ export default async function handler(req, res) {
             currency: it.currency,
             order_date: it.order_date,
           }
+          return { ...row, dedupe_key: spendDedupeKey(row) }
         })
+        // Two identical keys inside one batch would make Postgres reject the
+        // whole upsert ("cannot affect row a second time"), and one email can
+        // legitimately list the same product twice.
+        const byKey = new Map()
+        for (const row of rows) byKey.set(row.dedupe_key, row)
+        const uniqueRows = [...byKey.values()]
+
         const { error, count } = await supabase
           .from("spend_items")
-          .upsert(rows, { onConflict: "user_id,email_id,item_name", count: "exact" })
+          .upsert(uniqueRows, { onConflict: "user_id,dedupe_key", count: "exact" })
         if (error) {
           console.error("spend_items insert error:", error.message, error.details || "")
           return res.status(500).json({ error: error.message })
         }
-        inserted = count || rows.length
+        inserted = count || uniqueRows.length
       }
     }
 
@@ -119,7 +136,15 @@ export default async function handler(req, res) {
       }
     }
 
-    res.json({ scanned: rawEmails.length, newEmails: newEmails.length, inserted, categorized })
+    res.json({
+      scanned: rawEmails.length,
+      newEmails: newEmails.length,
+      inserted,
+      categorized,
+      // Line items seen in dispatch/delivery/marketing emails and deliberately
+      // not counted as purchases.
+      skippedRestatements,
+    })
   } catch (err) {
     console.error("Amazon spend sync error:", err.message)
     res.status(500).json({ error: err.message })
