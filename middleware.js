@@ -21,6 +21,18 @@ export async function middleware(req) {
     "/api/auth",
     "/api/mailing-list",
     "/api/contact",
+    // Vercel Cron invokes this with `Authorization: Bearer $CRON_SECRET` and
+    // no session cookie — the route authenticates itself (see the CRON_SECRET
+    // check at the top of pages/api/cron/morning-brief.js) and must never be
+    // reachable without it. Before this entry the redirect below intercepted
+    // every scheduled run with a 307 to /login, so the handler never ran and
+    // the morning brief silently never sent.
+    "/api/cron",
+    // Registered by lib/push-client.js from inside the logged-in app, but the
+    // browser also re-fetches it periodically to check for updates. Answering
+    // that with a redirect to an HTML page fails the update with a bad MIME
+    // type and can unregister the worker.
+    "/sw.js",
     "/_next",
     "/favicon.ico",
     "/manifest.json",
@@ -62,7 +74,16 @@ export async function middleware(req) {
     if (user) return response
   }
 
-  // Not authenticated — redirect to login
+  // Not authenticated. API routes get a real 401 rather than the redirect a
+  // page gets: following a redirect to /login yields 200 text/html, so every
+  // caller doing `if (r.ok)` treated the login page as a successful response
+  // and then threw a SyntaxError on r.json(). That surfaced as the app
+  // quietly reporting "no providers connected" and sync failing in silence,
+  // instead of sending her back to sign in.
+  if (pathname.startsWith("/api/")) {
+    return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
+  }
+
   const url = req.nextUrl.clone()
   url.pathname = "/login"
   return NextResponse.redirect(url)

@@ -27,7 +27,7 @@ const MicrosoftPersonalProvider = {
 
 // authOptions has to be a function of `req` (not a static object) because the
 // jwt() callback below needs it — see the comment inside jwt() for why.
-export function getAuthOptions(req) {
+export function getAuthOptions(req, res) {
   return {
     providers: [
       GoogleProvider({
@@ -77,7 +77,11 @@ export function getAuthOptions(req) {
             // person's tasks/tokens could end up keyed by whichever email
             // Google/Microsoft last handed back. See ROADMAP.md's multi-user
             // identity migration for the full story.
-            const supabaseUser = await getSupabaseUserReadOnly(req)
+            // `res` is passed so a Supabase session refresh triggered here is
+            // actually written back — see the comment on getSupabaseUserReadOnly.
+            // Both it and NextAuth append to Set-Cookie, so neither clobbers
+            // the other's write on this shared response.
+            const supabaseUser = await getSupabaseUserReadOnly(req, res)
             if (!supabaseUser) {
               console.error("Cannot persist provider tokens: no Supabase Auth session on this request — connect Gmail/Outlook from inside the logged-in app, not standalone.")
             } else {
@@ -112,5 +116,5 @@ export function getAuthOptions(req) {
 }
 
 export default async function auth(req, res) {
-  return NextAuth(req, res, getAuthOptions(req))
+  return NextAuth(req, res, getAuthOptions(req, res))
 }

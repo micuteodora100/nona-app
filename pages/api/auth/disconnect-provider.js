@@ -28,11 +28,12 @@ export default async function handler(req, res) {
   // used to fail with a false "Provider not connected" here even though the
   // token genuinely existed server-side — the same class of bug the identity
   // migration fixed for the read path, just never carried over to this one.
-  // Read-only variant deliberately, not getSupabaseUser(req, res) — this
-  // handler writes its own Set-Cookie header for the NextAuth session further
-  // down, and a second unrelated Set-Cookie write from the Supabase client
-  // would silently clobber it (Node's res.setHeader replaces, not appends).
-  const user = await getSupabaseUserReadOnly(req)
+  // Read-only variant, but `res` is passed so a Supabase session refresh
+  // triggered here isn't thrown away (see lib/supabase-auth.js — discarding it
+  // burns a rotated refresh token and can sign her out). Both this handler's
+  // own NextAuth cookie write below and the Supabase one append to Set-Cookie
+  // rather than replacing it, so the two coexist on this response.
+  const user = await getSupabaseUserReadOnly(req, res)
   if (!user) return res.status(401).json({ error: "Not authenticated" })
 
   const supabase = getSupabaseServer()
@@ -78,7 +79,12 @@ export default async function handler(req, res) {
         `Max-Age=${DEFAULT_MAX_AGE}`,
       ]
       if (secureCookie) attrs.push("Secure")
-      res.setHeader("Set-Cookie", attrs.join("; "))
+      // Append, never replace — getSupabaseUserReadOnly above may already have
+      // written a refreshed Supabase session cookie onto this same response.
+      const existing = res.getHeader("Set-Cookie")
+      const header = existing == null ? [] : Array.isArray(existing) ? [...existing] : [existing]
+      header.push(attrs.join("; "))
+      res.setHeader("Set-Cookie", header)
     }
   } catch (err) {
     console.error("Failed to sync NextAuth session cookie on disconnect (non-fatal):", err.message)

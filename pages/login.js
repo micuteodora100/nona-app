@@ -20,9 +20,35 @@ export default function Login() {
   useEffect(() => {
     if (!supabase) { setConfigError(true); return }
 
-    // Check if already logged in
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) router.push("/app")
+    // Magic links and signup confirmations land back here carrying ?code=…
+    // — createBrowserClient is PKCE-only (@supabase/ssr forces flowType
+    // "pkce"), so that code is exchanged for a session during the client's
+    // own initialization, which both getUser() and getSession() await. The
+    // exchange can only happen on a page that actually mounts the Supabase
+    // client, which is why emailRedirectTo in handleLogin points here: the
+    // Supabase default is the project's Site URL, and pages/index.js is the
+    // marketing page that never imports lib/supabase, so a link landing
+    // there left the code unspent and the person still logged out.
+    // An expired or already-used link comes back as ?error=…&error_description=…
+    // instead of a code. Deliberately left in the URL rather than tidied away
+    // with replaceState: reactStrictMode double-mounts this effect in dev, so
+    // clearing the query on the first mount left the second one with nothing
+    // to read and the message never rendered at all. The URL is also what
+    // makes the error survive a refresh, which is the right behaviour anyway.
+    const params = new URLSearchParams(window.location.search)
+    const linkError = params.get("error_description") || params.get("error")
+    if (linkError) {
+      setError(linkError)
+      return
+    }
+
+    // getUser() validates the session against Supabase; getSession() only
+    // reads the cookie and trusts it. They disagree once an account is
+    // deleted or signed out everywhere — and since middleware.js validates
+    // too, trusting the cookie here bounced the person /login → /app →
+    // /login in a loop until the access token finally expired.
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user) router.replace("/app")
     })
   }, [])
 
@@ -42,21 +68,36 @@ export default function Login() {
     setError(""); setMessage(""); setLoading(true)
     // Supabase ignores an undefined captchaToken, so this is a no-op until
     // CAPTCHA is switched on in Authentication → Attack Protection.
-    const options = TURNSTILE_SITE_KEY ? { captchaToken } : undefined
+    const captcha = TURNSTILE_SITE_KEY ? { captchaToken } : {}
+    // Emailed links have to come back to this page — it's the only one that
+    // mounts the Supabase client and can therefore complete the PKCE code
+    // exchange (see the mount effect above). This URL also has to be listed
+    // under Authentication → URL Configuration → Redirect URLs in the
+    // Supabase dashboard, or Supabase silently falls back to the Site URL.
+    const emailRedirectTo = `${window.location.origin}/login`
     try {
       if (mode === "magic") {
-        const { error } = await supabase.auth.signInWithOtp({ email, options })
+        const { error } = await supabase.auth.signInWithOtp({ email, options: { ...captcha, emailRedirectTo } })
         if (error) throw error
         setMessage("Check your email for a login link!")
       } else if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({ email, password, options })
+        const { data, error } = await supabase.auth.signUp({ email, password, options: { ...captcha, emailRedirectTo } })
         if (error) throw error
-        setMessage("Account created! Check your email to confirm, then log in.")
-        setMode("login")
+        // With email confirmation switched off in the dashboard, signUp
+        // returns a live session immediately — telling her to go and confirm
+        // an email that will never arrive, while she's already signed in, is
+        // just wrong. Only show that message when there's genuinely no
+        // session yet and a confirmation really is pending.
+        if (data.session) {
+          router.replace("/app")
+        } else {
+          setMessage("Account created! Check your email to confirm, then log in.")
+          setMode("login")
+        }
       } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password, options })
+        const { error } = await supabase.auth.signInWithPassword({ email, password, options: captcha })
         if (error) throw error
-        router.push("/app")
+        router.replace("/app")
       }
     } catch (err) {
       setError(err.message)
