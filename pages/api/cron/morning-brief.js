@@ -96,6 +96,11 @@ export default async function handler(req, res) {
         child: profile.child || "your child",
         creche: profile.creche,
         work: profile.work,
+        // Items dismissed off the in-app brief. They live on the profile
+        // (synced via /api/sync) precisely so the push notification honours
+        // them too — otherwise the 7am push would keep announcing exactly the
+        // things she'd already told the app to stop showing her.
+        dismissedBriefItems: profile.dismissedBriefItems || [],
       }
 
       // Email situation summary — best effort. Combine whichever of
