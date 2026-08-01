@@ -26,6 +26,33 @@ export default async function handler(req, res) {
 
   if (error) return res.status(500).json({ error: error.message })
 
-  const total = (data || []).reduce((sum, it) => sum + (Number(it.price) || 0), 0)
-  res.json({ items: data || [], total })
+  const rows = data || []
+
+  // Refunds are stored as their own rows (kind='refund') rather than by
+  // deleting the purchase, so the history still shows what was bought and
+  // sent back. Matching them up by order+item lets the widget grey out the
+  // returned purchase instead of just silently shrinking the total.
+  const refundedKeys = new Set(rows.filter((r) => r.kind === "refund").map((r) => r.dedupe_key))
+
+  const items = rows
+    .filter((r) => r.kind !== "refund")
+    .map((r) => ({ ...r, refunded: refundedKeys.has(r.dedupe_key) }))
+
+  // Net of returns. Previously every row was summed unconditionally, so
+  // anything sent back stayed in the total forever.
+  const purchased = rows.filter((r) => r.kind !== "refund").reduce((s, r) => s + (Number(r.price) || 0), 0)
+  const refunded = rows.filter((r) => r.kind === "refund").reduce((s, r) => s + (Number(r.price) || 0), 0)
+
+  const byCategory = {}
+  for (const r of rows) {
+    const key = r.category || "Other"
+    const amount = (Number(r.price) || 0) * (r.kind === "refund" ? -1 : 1)
+    byCategory[key] = (byCategory[key] || 0) + amount
+  }
+  const categories = Object.entries(byCategory)
+    .map(([category, total]) => ({ category, total }))
+    .filter((c) => c.total !== 0)
+    .sort((a, b) => b.total - a.total)
+
+  res.json({ items, total: purchased - refunded, purchased, refunded, categories })
 }

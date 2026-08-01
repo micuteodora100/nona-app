@@ -9,9 +9,11 @@ const client = getAnthropicClient()
 
 // Pulls Amazon order emails from every connected provider (12mo backfill),
 // skips ones already synced (by email_id), extracts line items via AI, and
-// stores new rows. Safe to call repeatedly — dedup happens both before the
-// AI call (skip already-seen email_ids) and at insert time (unique
-// constraint on user_id+email_id+item_name).
+// stores new rows. Safe to call repeatedly — dedup happens before the AI call
+// (skip already-seen email_ids), inside the extractor (collapse by order
+// number within a run), and at insert time (unique constraint on
+// user_id+kind+dedupe_key). See supabase/spend-tracking-v2.sql for why the
+// key is the Amazon order number rather than the email's own id.
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end()
 
@@ -22,12 +24,13 @@ export default async function handler(req, res) {
   if (!supabase) return res.status(500).json({ error: "Storage not configured" })
 
   try {
-    const { data: existingRows } = await supabase
-      .from("spend_items")
+    // Every email already put through extraction, not just the ones that
+    // produced a row — see spend_synced_emails in supabase/spend-tracking-v2.sql.
+    const { data: seenRows } = await supabase
+      .from("spend_synced_emails")
       .select("email_id")
       .eq("user_id", user.id)
-      .eq("source", "amazon")
-    const seenEmailIds = new Set((existingRows || []).map((r) => r.email_id))
+    const seenEmailIds = new Set((seenRows || []).map((r) => r.email_id))
 
     let rawEmails = []
 
@@ -58,20 +61,34 @@ export default async function handler(req, res) {
           source: "amazon",
           email_id: it.email_id,
           order_id: it.order_id,
+          kind: it.kind,
           item_name: it.item_name,
           price: it.price,
           currency: it.currency,
           order_date: it.order_date,
+          category: it.category,
+          dedupe_key: it.dedupe_key,
         }))
         const { error, count } = await supabase
           .from("spend_items")
-          .upsert(rows, { onConflict: "user_id,email_id,item_name", count: "exact" })
+          .upsert(rows, { onConflict: "user_id,kind,dedupe_key", count: "exact" })
         if (error) {
           console.error("spend_items insert error:", error.message, error.details || "")
           return res.status(500).json({ error: error.message })
         }
         inserted = count || rows.length
       }
+
+      // Only marked as seen once the rows above are safely stored, so a failed
+      // insert leaves the emails eligible for the next sync rather than
+      // silently dropping those purchases forever.
+      const { error: seenError } = await supabase
+        .from("spend_synced_emails")
+        .upsert(
+          newEmails.map((e) => ({ user_id: user.id, email_id: e.id })),
+          { onConflict: "user_id,email_id" }
+        )
+      if (seenError) console.error("spend_synced_emails insert error:", seenError.message)
     }
 
     res.json({ scanned: rawEmails.length, newEmails: newEmails.length, inserted })
