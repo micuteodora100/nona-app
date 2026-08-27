@@ -15,8 +15,6 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 | P0 | S | Cross-device sync — tasks/profile reset on new browser/device | Open — needs Supabase |
 | P0 | XS | Brief AI references past events (French exam) as upcoming | Fixed in code, deploy pending |
 | P0 | XS | Handled email memory — ticked tasks resurface on next triage | Built (localStorage stopgap) |
-| P1 | M | Outlook connection — IMAP blocked by Microsoft | Parked — needs Azure OAuth |
-
 ---
 
 ## 🔐 Security (do before sharing with anyone)
@@ -55,7 +53,6 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 | P2 | S | **Crèche/school email parsing** | Detect crèche/school emails, extract dates, requirements, payments into tasks automatically |
 | P2 | M | **Morning brief push notification at 7am** | PWA service worker or native app required |
 | P3 | L | **Partner view** | Read-only summary for partner — makes invisible labour visible |
-| P3 | XL | **Outlook OAuth** | Proper fix via Microsoft Azure — needs verified app registration |
 
 ---
 
@@ -114,6 +111,8 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 | Focus tab | Removed |
 | Tab bar | Removed |
 | Outlook IMAP status checker | Test button in Settings, shows exact error |
+| Outlook OAuth connection | Direct Azure app registration + custom NextAuth provider (not IMAP, not Supabase's Azure provider) — `Mail.Read`, `Notes.Read`, `Calendars.Read` scopes |
+| OneNote connection (read-only) | Rides the same Microsoft OAuth connection as Outlook, no separate connect flow. Notebook picker lets the user choose which notebooks feed the AI; opt-in gate off by default; reconnect prompt shown if an existing token predates the `Notes.Read` scope |
 
 ---
 
@@ -124,4 +123,4 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 - No tab bar — single scroll, drill-down with Back button
 - Brief = bullet list of action items only, no narrative
 - Tasks = separate date field, AI-parsed, grouped by date
-- Outlook = parked until Azure OAuth solved
+- Outlook = direct Azure app registration + custom NextAuth provider (shipped); OneNote read-only rides the same connection (shipped)
