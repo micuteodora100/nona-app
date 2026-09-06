@@ -50,7 +50,6 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 | P1 | S | **Voice capture** | Big mic button on home screen. Tap → speak → AI parses to dated tasks. Web Speech API already partially built. Primary capture method on mobile. |
 | P1 | M | **Waiting for replies tracker** | Scans sent Gmail, finds threads with no reply after 5 days. "Still waiting on X recruiter since 12 Jun." Huge for job search. |
 | P1 | M | **Email → Calendar events with links** | Detect flights, tickets, bookings from emails. Show in calendar with tap-to-open link to original email. "Flight to Nice 8 Jul 14:35 →" |
-| P2 | S | **Google Calendar integration** | Show real Google Calendar appointments in week view alongside tasks |
 | P2 | M | **Document expiry reminders** | Passport, driving licence, residence permit, contrôle technique. One-time setup, reminds 6 weeks before expiry. High value in Luxembourg. |
 | P2 | S | **Crèche/school email parsing** | Detect crèche/school emails, extract dates, requirements, payments into tasks automatically |
 | P2 | M | **Morning brief push notification at 7am** | PWA service worker or native app required |
@@ -114,6 +113,7 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 | Focus tab | Removed |
 | Tab bar | Removed |
 | Outlook IMAP status checker | Test button in Settings, shows exact error |
+| Google Calendar integration | Built on `feature/google-calendar`, merged to `main` — see ROADMAP.md Shipped. Read-only, `calendar.readonly` scope, merged into week view with icon vs. dot distinction and per-event hide controls. |
 
 ---
 
