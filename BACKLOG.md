@@ -39,7 +39,6 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 |----------|------|---------|-------|
 | P1 | XL | **Supabase backend** | Cross-device sync, persistent data, multi-user. Without this nothing else scales. |
 | P1 | M | **Full email body reading** | Currently 100-150 char previews only — dates and amounts hidden in body are missed |
-| P1 | S | **AI context survey on first open** | 5 questions + read 90 days emails to build personal context profile |
 
 ---
 
@@ -114,6 +113,7 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 | Focus tab | Removed |
 | Tab bar | Removed |
 | Outlook IMAP status checker | Test button in Settings, shows exact error |
+| AI context survey on first open | Built on `feature/context-survey`, merged to `origin/main`. 3-step onboarding: basic info → confirm/add/remove categories → scans last 90 days of Gmail/Outlook via the existing fetch routes, AI (`/api/ai` `type: "email_patterns"`) detects recurring sender/subject groups, user keeps/mutes each, answers pre-populate `profile.categories` and `profile.emailFilters`. Skips gracefully if no email provider is connected. See ROADMAP.md Shipped section. |
 
 ---
 
