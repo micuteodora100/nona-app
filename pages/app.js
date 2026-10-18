@@ -440,6 +440,10 @@ export default function Nona() {
   const [waitingLoading, setWaitingLoading] = useState(false)
   const [waitingError, setWaitingError] = useState(null)
 
+  const [jobApplications, setJobApplications] = useState(null) // null = not checked yet
+  const [jobApplicationsLoading, setJobApplicationsLoading] = useState(false)
+  const [jobApplicationsError, setJobApplicationsError] = useState(null)
+
   const [taskInput, setTaskInput] = useState("")
   const [taskFilter, setTaskFilter] = useState("all")
 
@@ -1134,6 +1138,34 @@ export default function Nona() {
       setWaitingError(e.message)
     }
     setWaitingLoading(false)
+  }
+
+  // Same manual, on-demand shape as fetchWaitingForReplies above — this hits
+  // a keyword search plus an AI classification pass, more expensive than the
+  // inbox triage fetch, so it stays opt-in rather than auto-fetched.
+  async function fetchJobApplications(force = false) {
+    if (!force) {
+      const cached = loadCache("nona_job_applications", 6)
+      if (cached) {
+        setJobApplications(cached)
+        return
+      }
+    }
+    setJobApplicationsLoading(true)
+    setJobApplicationsError(null)
+    try {
+      const r = await fetch("/api/email/job-applications")
+      const d = await r.json()
+      if (!r.ok) {
+        setJobApplicationsError(d.error || `Request failed (HTTP ${r.status})`)
+      } else {
+        setJobApplications(d.pending || [])
+        saveCache("nona_job_applications", d.pending || [])
+      }
+    } catch (e) {
+      setJobApplicationsError(e.message)
+    }
+    setJobApplicationsLoading(false)
   }
 
   function dismissEmail(email) {
@@ -2909,6 +2941,36 @@ export default function Nona() {
                           <div className="triage-from">waiting {w.days} days</div>
                           <div className="triage-subject">{w.subject}</div>
                           <div className="triage-reason">to {w.to}</div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="triage-section" style={{ marginTop: 20 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: jobApplications ? 8 : 0 }}>
+                    <div className="triage-label" style={{ color: "var(--gold)" }}>💼 Pending job applications</div>
+                    <button className="btn-sm" style={{ fontSize: 11 }} disabled={jobApplicationsLoading}
+                      onClick={() => fetchJobApplications(true)}>
+                      {jobApplicationsLoading ? "Checking…" : jobApplications ? "↺ Refresh" : "Check"}
+                    </button>
+                  </div>
+
+                  {jobApplicationsError ? (
+                    <p style={{ fontSize: 13, color: "#e87a7a", marginTop: 8 }}>{jobApplicationsError}</p>
+                  ) : jobApplications === null ? (
+                    <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
+                      Scans the last 60 days of inbox for job applications you haven't heard back on in 10+ days.
+                    </p>
+                  ) : jobApplications.length === 0 ? (
+                    <p style={{ fontSize: 13, color: "var(--muted)" }}>Nothing pending — no application is waiting past the usual window.</p>
+                  ) : (
+                    jobApplications.map((a, i) => (
+                      <div key={i} className="triage-item">
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div className="triage-from">no reply in {a.days} days</div>
+                          <div className="triage-subject">{a.company}{a.role ? ` · ${a.role}` : ""}</div>
+                          <div className="triage-reason">applied {a.appliedDate}</div>
                         </div>
                       </div>
                     ))
