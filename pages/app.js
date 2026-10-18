@@ -978,7 +978,7 @@ export default function Nona() {
         body: JSON.stringify({
           type: "triage",
           emails: listToTriage,
-          context: { name: profile.name || "there", child: profile.child || "your child", notesSummary: onenoteContextSummary() },
+          context: { name: profile.name || "there", child: profile.child || "your child", creche: profile.creche || "", notesSummary: onenoteContextSummary() },
           categories: getCategories(profile),
           dismissedPatterns: profile.dismissedTaskPatterns || [],
           existingTasks: tasks.filter(t => !t.done && !t.notRelevant && !t.isEvent).map(t => t.text),
