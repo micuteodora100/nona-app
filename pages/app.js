@@ -5,7 +5,7 @@ import { supabase } from "../lib/supabase"
 import { subscribeToPush, unsubscribeFromPush, getPushPermissionState } from "../lib/push-client"
 import { getCategories, categoryLabel, slugifyCategoryId, noteColor, nextNoteColor, validTag } from "../lib/categories"
 import { partitionBulk } from "../lib/email-prefilter"
-import { spendCategoryMeta, spendItemUrl, DEFAULT_AMAZON_DOMAIN } from "../lib/spend-categories"
+import { spendCategoryMeta, spendItemUrl, spendSourceLabel, DEFAULT_AMAZON_DOMAIN } from "../lib/spend-categories"
 
 // ── helpers ──────────────────────────────────────────────────────────────
 const STORAGE_KEY = "nona_v2"
@@ -2556,14 +2556,15 @@ export default function Nona() {
                 </svg>
               </button>
 
-              {/* Amazon spend — per-product-category breakdown (milk, diapers, …)
-                  on top, then a vertical snap-scroll feed of the actual items,
-                  each tapping through to its Amazon product page. Tapping a
-                  category narrows the feed to it. */}
+              {/* Spend — per-product-category breakdown (milk, diapers, …) on
+                  top, then a vertical snap-scroll feed of the actual items.
+                  Amazon items tap through to their product page; Lidl/Cactus
+                  items have no such link and render as plain cards. Tapping
+                  a category narrows the feed to it. */}
               {(providers?.google || providers?.microsoft) && (
                 <>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                    <span className="label" style={{ marginBottom: 0 }}>🛒 Amazon spend</span>
+                    <span className="label" style={{ marginBottom: 0 }}>🛒 Spend</span>
                     <button onClick={syncSpend} disabled={spendSyncing} style={{ fontSize: 11, color: "var(--muted)" }}>
                       {spendSyncing ? "Syncing…" : "↺ Sync"}
                     </button>
@@ -2588,7 +2589,7 @@ export default function Nona() {
                       <div style={{ padding: "20px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>Loading…</div>
                     ) : spendItems.length === 0 ? (
                       <div style={{ padding: "20px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>
-                        {spendSynced ? "No Amazon orders in this period." : "Tap Sync to pull your Amazon order history."}
+                        {spendSynced ? "No orders in this period." : "Tap Sync to pull your Amazon, Lidl and Cactus order history."}
                       </div>
                     ) : (
                       <>
@@ -2632,7 +2633,7 @@ export default function Nona() {
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                           <div style={{ fontSize: 11, color: "var(--muted)" }}>
                             {spendCategory === undefined
-                              ? `${visibleSpendItems.length} item${visibleSpendItems.length === 1 ? "" : "s"} · tap one to open it on Amazon`
+                              ? `${visibleSpendItems.length} item${visibleSpendItems.length === 1 ? "" : "s"}`
                               : `${spendCategoryMeta(spendCategory).label} · ${visibleSpendItems.length} item${visibleSpendItems.length === 1 ? "" : "s"}`}
                           </div>
                           {spendCategory !== undefined && (
@@ -2643,26 +2644,24 @@ export default function Nona() {
                         <div className="spend-feed" style={{ height: 260 }}>
                           {visibleSpendItems.map((it) => {
                             const meta = spendCategoryMeta(it.category || null)
-                            return (
-                              // A real link (not a click handler) so it can be
-                              // long-pressed/opened in a new tab like any other
-                              // product link. Falls back to an Amazon search for
-                              // the item name when no product code was recoverable
-                              // from the order email — see lib/spend-categories.js.
-                              <a
-                                key={it.id}
-                                className="spend-feed-card"
-                                href={spendItemUrl(it, amazonDomain)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                title={it.product_url ? "Open this product on Amazon" : "Search for this product on Amazon"}
-                                style={{
-                                  height: 240, flexShrink: 0, borderRadius: 12, background: "var(--bg)",
-                                  border: "1px solid var(--border)", padding: "18px", display: "flex",
-                                  flexDirection: "column", justifyContent: "center", alignItems: "center",
-                                  textAlign: "center", gap: 10, textDecoration: "none",
-                                }}
-                              >
+                            // Real link (not a click handler) so it can be
+                            // long-pressed/opened in a new tab, same as any
+                            // other product link — Amazon only. Lidl/Cactus
+                            // items have no product page to link to, so they
+                            // render as a plain, non-clickable card instead of
+                            // falling back to an (incorrect) Amazon search.
+                            const url = spendItemUrl(it, amazonDomain)
+                            const footer = it.source === "amazon"
+                              ? (it.product_url ? "View on Amazon ↗" : "Find on Amazon ↗")
+                              : spendSourceLabel(it.source)
+                            const cardStyle = {
+                              height: 240, flexShrink: 0, borderRadius: 12, background: "var(--bg)",
+                              border: "1px solid var(--border)", padding: "18px", display: "flex",
+                              flexDirection: "column", justifyContent: "center", alignItems: "center",
+                              textAlign: "center", gap: 10, textDecoration: "none",
+                            }
+                            const inner = (
+                              <>
                                 <span style={{ fontSize: 26 }}>{meta.emoji}</span>
                                 <div style={{ fontSize: 15, fontWeight: 600, color: "var(--white)", lineHeight: 1.4 }}>{it.item_name}</div>
                                 <div className="serif" style={{ fontSize: 22, color: "var(--gold)" }}>
@@ -2673,9 +2672,26 @@ export default function Nona() {
                                   {it.order_date ? ` · ${new Date(it.order_date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` : ""}
                                 </div>
                                 <div style={{ fontSize: 11, color: "var(--gold)", fontWeight: 600 }}>
-                                  {it.product_url ? "View on Amazon ↗" : "Find on Amazon ↗"}
+                                  {footer}
                                 </div>
+                              </>
+                            )
+                            return url ? (
+                              <a
+                                key={it.id}
+                                className="spend-feed-card"
+                                href={url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title={it.product_url ? "Open this product on Amazon" : "Search for this product on Amazon"}
+                                style={cardStyle}
+                              >
+                                {inner}
                               </a>
+                            ) : (
+                              <div key={it.id} className="spend-feed-card" style={cardStyle}>
+                                {inner}
+                              </div>
                             )
                           })}
                         </div>
