@@ -39,7 +39,6 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 |----------|------|---------|-------|
 | P1 | XL | **Supabase backend** | Cross-device sync, persistent data, multi-user. Without this nothing else scales. |
 | P1 | M | **Full email body reading** | Currently 100-150 char previews only — dates and amounts hidden in body are missed |
-| P1 | S | **AI context survey on first open** | 5 questions + read 90 days emails to build personal context profile |
 
 ---
 
@@ -114,6 +113,7 @@ Priority: P0 = do now | P1 = next sprint | P2 = next quarter | P3 = future
 | Focus tab | Removed |
 | Tab bar | Removed |
 | Outlook IMAP status checker | Test button in Settings, shows exact error |
+| AI context survey on first open | Built 29 Jul 2026 on `feature/context-survey`, merged to `main` (commit `520dc75`) — see ROADMAP.md Shipped for full detail. This row was stale: three earlier automated passes (`chore/backlog-context-survey-already-shipped`, `docs/context-survey-already-shipped`, `chore/context-survey-already-shipped-cleanup`) already found this and fixed it on unmerged branches; this edit is the same fix, finally landing. |
 
 ---
 
